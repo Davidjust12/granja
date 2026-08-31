@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Granja — Control diario</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥚</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FBF7EF;
+    --card:#FFFFFF;
+    --border:#E5D9C2;
+    --ink:#2A2118;
+    --ink-soft:#6B5E4C;
+    --yolk:#E3A73A;
+    --yolk-dark:#C98E22;
+    --green:#3F6B4A;
+    --green-soft:#E7EFE7;
+    --rust:#B3462F;
+    --rust-soft:#FBEAE6;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Public Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased;}
+  h1,h2,h3{font-family:'Fraunces',serif;font-weight:600;margin:0;}
+  #app{max-width:480px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;position:relative;padding-bottom:82px;}
+  button{font-family:inherit;cursor:pointer;}
+  input,select{font-family:inherit;}
+
+  /* ---------- LOGIN ---------- */
+  #login-screen{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;gap:22px;text-align:center;}
+  #login-screen .egg{font-size:56px;}
+  #login-screen h1{font-size:28px;}
+  #login-screen p{color:var(--ink-soft);margin:0;font-size:15px;}
+  #login-screen input{width:100%;max-width:280px;padding:16px;font-size:18px;border:2px solid var(--border);border-radius:var(--radius);background:var(--card);text-align:center;letter-spacing:2px;}
+  #login-screen input:focus{outline:none;border-color:var(--yolk);}
+  #login-screen button{width:100%;max-width:280px;padding:16px;font-size:17px;font-weight:600;border:none;border-radius:var(--radius);background:var(--yolk);color:#fff;}
+  #login-error{color:var(--rust);font-size:14px;height:18px;}
+
+  /* ---------- HEADER ---------- */
+  header.topbar{padding:22px 20px 16px;}
+  header.topbar .greet{color:var(--ink-soft);font-size:14px;margin-bottom:2px;}
+  header.topbar h1{font-size:26px;}
+
+  /* ---------- NAV ---------- */
+  nav.tabbar{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--border);max-width:480px;margin:0 auto;display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom));z-index:20;}
+  nav.tabbar button{flex:1;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 1px;border-radius:10px;color:var(--ink-soft);font-size:9.5px;font-weight:600;}
+  nav.tabbar button .ic{font-size:18px;}
+  nav.tabbar button.active{color:var(--yolk-dark);background:#FDF3E0;}
+
+  /* ---------- LAYOUT HELPERS ---------- */
+  main{flex:1;padding:0 20px 24px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:14px;}
+  .row{display:flex;gap:12px;}
+  .row > *{flex:1;}
+  .stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;}
+  .stat .label{font-size:12px;color:var(--ink-soft);font-weight:600;text-transform:uppercase;letter-spacing:.03em;}
+  .stat .value{font-family:'Fraunces',serif;font-size:24px;font-weight:600;margin-top:4px;}
+  .stat.pos .value{color:var(--green);}
+  .stat.neg .value{color:var(--rust);}
+  .section-title{font-size:15px;font-weight:700;color:var(--ink-soft);margin:22px 0 10px;text-transform:uppercase;letter-spacing:.03em;}
+  .section-title:first-child{margin-top:0;}
+
+  label{display:block;font-size:13px;font-weight:600;color:var(--ink-soft);margin-bottom:6px;}
+  input[type=text],input[type=number],input[type=date],select,textarea{
+    width:100%;padding:13px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:16px;background:#fff;color:var(--ink);margin-bottom:14px;
+  }
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--yolk);}
+  .field{margin-bottom:0;}
+  .btn{display:block;width:100%;padding:15px;border:none;border-radius:12px;font-size:16px;font-weight:700;background:var(--yolk);color:#fff;}
+  .btn:active{background:var(--yolk-dark);}
+  .btn.secondary{background:var(--green-soft);color:var(--green);}
+  .btn.ghost{background:none;border:1.5px solid var(--border);color:var(--ink-soft);}
+  .btn.danger{background:var(--rust-soft);color:var(--rust);}
+  .toggle-group{display:flex;gap:8px;margin-bottom:14px;}
+  .toggle-group button{flex:1;padding:12px;border-radius:10px;border:1.5px solid var(--border);background:#fff;font-weight:600;font-size:14px;color:var(--ink-soft);}
+  .toggle-group button.selected{border-color:var(--yolk);background:#FDF3E0;color:var(--yolk-dark);}
+
+  .list-item{display:flex;justify-content:space-between;align-items:center;padding:13px 0;border-bottom:1px solid var(--border);gap:10px;}
+  .list-item:last-child{border-bottom:none;}
+  .list-item .meta{font-size:12px;color:var(--ink-soft);margin-top:2px;}
+  .list-item .amount{font-weight:700;font-family:'Fraunces',serif;font-size:16px;white-space:nowrap;}
+  .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;}
+  .badge.paid{background:var(--green-soft);color:var(--green);}
+  .badge.debt{background:var(--rust-soft);color:var(--rust);}
+  .empty{color:var(--ink-soft);font-size:14px;text-align:center;padding:20px 0;}
+  .del-x{background:none;border:none;color:var(--ink-soft);font-size:18px;padding:4px 6px;}
+
+  .fab-add{position:fixed;bottom:96px;right:calc(50% - 240px + 20px);width:56px;height:56px;border-radius:50%;background:var(--yolk);color:#fff;border:none;font-size:26px;box-shadow:0 4px 14px rgba(0,0,0,.2);z-index:15;}
+  @media (max-width:520px){.fab-add{right:20px;}}
+
+  .modal-bg{position:fixed;inset:0;background:rgba(42,33,24,.45);display:flex;align-items:flex-end;z-index:30;}
+  .modal{background:var(--bg);width:100%;max-width:480px;margin:0 auto;border-radius:20px 20px 0 0;padding:22px 20px calc(22px + env(safe-area-inset-bottom));max-height:88vh;overflow-y:auto;}
+  .modal h2{font-size:20px;margin-bottom:16px;}
+  .modal-close{position:absolute;top:16px;right:20px;background:none;border:none;font-size:22px;color:var(--ink-soft);}
+
+  .period-tabs{display:flex;gap:8px;margin-bottom:16px;}
+  .period-tabs button{flex:1;padding:10px;border-radius:10px;border:1.5px solid var(--border);background:#fff;font-size:13px;font-weight:600;color:var(--ink-soft);}
+  .period-tabs button.selected{background:var(--ink);color:#fff;border-color:var(--ink);}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="egg">🥚</div>
+  <h1>Control de la Granja</h1>
+  <p>Ingresa la contraseña familiar para entrar</p>
+  <input type="password" id="login-input" placeholder="Contraseña" autocomplete="off">
+  <div id="login-error"></div>
+  <button onclick="tryLogin()">Entrar</button>
+</div>
+
+<div id="app" style="display:none;">
+  <header class="topbar">
+    <div class="greet" id="today-label"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <h1 id="page-title">Inicio</h1>
+      <button onclick="openPricesModal()" style="background:none;border:1.5px solid var(--border);border-radius:10px;padding:8px 10px;font-size:16px;color:var(--ink-soft);">⚙️</button>
+    </div>
+  </header>
+  <main id="main-content"></main>
+
+  <nav class="tabbar">
+    <button data-view="dashboard" onclick="setView('dashboard')"><span class="ic">🏠</span>Inicio</button>
+    <button data-view="production" onclick="setView('production')"><span class="ic">🥚</span>Producción</button>
+    <button data-view="sales" onclick="setView('sales')"><span class="ic">🧾</span>Ventas</button>
+    <button data-view="clients" onclick="setView('clients')"><span class="ic">👥</span>Clientes</button>
+    <button data-view="expenses" onclick="setView('expenses')"><span class="ic">💸</span>Gastos</button>
+    <button data-view="analysis" onclick="setView('analysis')"><span class="ic">📊</span>Análisis</button>
+  </nav>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+/* ============ CONFIGURACIÓN ============ */
+const SUPABASE_URL = "https://jumtjdpqtnulibgkoufk.supabase.co";
+const SUPABASE_KEY = "sb_publishable_KrpzNGnHshh2J0NowUg_ug_A_UKVijQ";
+const APP_PASSWORD = "granja2026"; // <-- cámbiala aquí cuando quieras
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const SIZES = [
+  {v:'chico', l:'Chico'},
+  {v:'mediano', l:'Mediano'},
+  {v:'grande', l:'Grande'},
+  {v:'extra_grande', l:'Extra grande'}
+];
+const sizeLabel = v => (SIZES.find(s=>s.v===v)||{}).l || v;
+const unidadLabel = u => u==='caja' ? 'caja(s)' : u==='unidad' ? 'huevo(s)' : 'cartón(es)';
+
+const money = n => new Intl.NumberFormat('es-GT', {style:'currency', currency:'GTQ'}).format(n||0);
+const todayISO = () => new Date().toISOString().slice(0,10);
+const fmtDate = d => new Date(d+'T00:00:00').toLocaleDateString('es-GT', {day:'2-digit', month:'short'});
+
+let state = { view: 'dashboard', prices: [], clients: [] };
+
+async function withSaving(btn, fn){
+  const original = btn ? btn.textContent : null;
+  if(btn){ btn.disabled = true; btn.textContent = 'Guardando…'; }
+  try{
+    await fn();
+  } catch(err){
+    console.error(err);
+    alert('No se pudo guardar.\n\nError: ' + (err && (err.message || err.details) || 'desconocido') + '\n\nRevisa tu conexión a internet e inténtalo de nuevo.');
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = original; }
+  }
+}
+
+/* ============ LOGIN ============ */
+function tryLogin(){
+  const val = document.getElementById('login-input').value;
+  if(val === APP_PASSWORD){
+    sessionStorage.setItem('granja_auth','1');
+    boot();
+  } else {
+    document.getElementById('login-error').textContent = 'Contraseña incorrecta';
+  }
+}
+document.getElementById('login-input').addEventListener('keydown', e=>{
+  if(e.key==='Enter') tryLogin();
+  document.getElementById('login-error').textContent='';
+});
+
+async function boot(){
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  document.getElementById('today-label').textContent = new Date().toLocaleDateString('es-GT',{weekday:'long', day:'numeric', month:'long'});
+  await Promise.all([loadPrices(), loadClients()]);
+  setView('dashboard');
+}
+
+if(sessionStorage.getItem('granja_auth')==='1'){ boot(); }
+
+/* ============ DATA HELPERS ============ */
+async function loadPrices(){
+  const {data} = await sb.from('prices').select('*').order('tamano');
+  state.prices = data || [];
+}
+async function loadClients(){
+  const {data} = await sb.from('customers').select('*').order('nombre');
+  state.clients = data || [];
+}
+function priceFor(tamano, unidad){
+  const p = state.prices.find(p=>p.tamano===tamano);
+  if(!p) return 0;
+  if(unidad==='caja') return p.precio_caja;
+  if(unidad==='unidad') return p.precio_unidad;
+  return p.precio_carton;
+}
+
+function openPricesModal(){
+  showModal(`
+    <h2>Precios por tamaño</h2>
+    ${SIZES.map(s=>{
+      const p = state.prices.find(pr=>pr.tamano===s.v) || {};
+      return `
+      <div class="card" style="margin-bottom:12px;padding:14px;">
+        <div style="font-weight:700;margin-bottom:10px;">${s.l}</div>
+        <div class="row">
+          <div>
+            <label>Unidad (Q)</label>
+            <input type="number" step="0.01" id="price-${s.v}-unidad" value="${p.precio_unidad ?? 0}">
+          </div>
+          <div>
+            <label>Cartón (Q)</label>
+            <input type="number" step="0.01" id="price-${s.v}-carton" value="${p.precio_carton ?? 0}">
+          </div>
+          <div>
+            <label>Caja (Q)</label>
+            <input type="number" step="0.01" id="price-${s.v}-caja" value="${p.precio_caja ?? 0}">
+          </div>
+        </div>
+      </div>`;
+    }).join('')}
+    <button class="btn" onclick="savePrices(this)">Guardar precios</button>
+  `);
+}
+async function savePrices(btn){
+  await withSaving(btn, async ()=>{
+    for(const s of SIZES){
+      const precio_unidad = parseFloat(document.getElementById(`price-${s.v}-unidad`).value)||0;
+      const precio_carton = parseFloat(document.getElementById(`price-${s.v}-carton`).value)||0;
+      const precio_caja = parseFloat(document.getElementById(`price-${s.v}-caja`).value)||0;
+      const {error} = await sb.from('prices').update({precio_unidad, precio_carton, precio_caja}).eq('tamano', s.v);
+      if(error) throw error;
+    }
+    await loadPrices();
+    closeModal();
+    alert('Precios actualizados ✓');
+  });
+}
+
+const TITLES = {dashboard:'Inicio', production:'Producción', sales:'Ventas', clients:'Clientes', expenses:'Gastos', analysis:'Análisis'};
+
+let chartJsLoaded = false;
+function loadChartJs(){
+  return new Promise((resolve, reject)=>{
+    if(chartJsLoaded && window.Chart){ resolve(); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js';
+    s.onload = ()=>{ chartJsLoaded = true; resolve(); };
+    s.onerror = ()=> reject(new Error('No se pudo cargar la librería de gráficos. Revisa tu conexión a internet.'));
+    document.head.appendChild(s);
+  });
+}
+
+async function setView(view){
+  state.view = view;
+  document.getElementById('page-title').textContent = TITLES[view];
+  document.querySelectorAll('nav.tabbar button').forEach(b=>b.classList.toggle('active', b.dataset.view===view));
+  const main = document.getElementById('main-content');
+  main.innerHTML = '<div class="empty">Cargando…</div>';
+  if(view==='dashboard') await renderDashboard();
+  else if(view==='production') await renderProduction();
+  else if(view==='sales') await renderSales();
+  else if(view==='clients') await renderClients();
+  else if(view==='expenses') await renderExpenses();
+  else if(view==='analysis') await renderAnalysis();
+}
+
+/* ============ DASHBOARD ============ */
+let dashPeriod = 'today';
+function periodRange(p){
+  const now = new Date();
+  let start;
+  if(p==='today'){ start = todayISO(); }
+  else if(p==='week'){ const d=new Date(now); d.setDate(d.getDate()-6); start=d.toISOString().slice(0,10); }
+  else { const d=new Date(now); d.setDate(d.getDate()-29); start=d.toISOString().slice(0,10); }
+  return {start, end: todayISO()};
+}
+
+async function renderDashboard(){
+  const {start, end} = periodRange(dashPeriod);
+  const [salesRes, expRes, debtSalesRes, paymentsRes] = await Promise.all([
+    sb.from('sales').select('*').gte('fecha', start).lte('fecha', end),
+    sb.from('expenses').select('*').gte('fecha', start).lte('fecha', end),
+    sb.from('sales').select('total, customer_id').eq('pagado', false),
+    sb.from('payments').select('monto, customer_id')
+  ]);
+  const sales = salesRes.data || [];
+  const expenses = expRes.data || [];
+  const totalVentas = sales.reduce((a,s)=>a+Number(s.total),0);
+  const totalGastos = expenses.reduce((a,e)=>a+Number(e.monto),0);
+  const ganancia = totalVentas - totalGastos;
+
+  const debtBySales = {}; (debtSalesRes.data||[]).forEach(s=>{ debtBySales[s.customer_id]=(debtBySales[s.customer_id]||0)+Number(s.total); });
+  const paidByCustomer = {}; (paymentsRes.data||[]).forEach(p=>{ paidByCustomer[p.customer_id]=(paidByCustomer[p.customer_id]||0)+Number(p.monto); });
+  let totalPorCobrar = 0;
+  Object.keys(debtBySales).forEach(cid=>{
+    const bal = debtBySales[cid] - (paidByCustomer[cid]||0);
+    if(bal>0) totalPorCobrar += bal;
+  });
+
+  const main = document.getElementById('main-content');
+  main.innerHTML = `
+    <div class="period-tabs">
+      <button onclick="dashPeriod='today';renderDashboard()" class="${dashPeriod==='today'?'selected':''}">Hoy</button>
+      <button onclick="dashPeriod='week';renderDashboard()" class="${dashPeriod==='week'?'selected':''}">7 días</button>
+      <button onclick="dashPeriod='month';renderDashboard()" class="${dashPeriod==='month'?'selected':''}">30 días</button>
+    </div>
+    <div class="row" style="margin-bottom:12px;">
+      <div class="stat"><div class="label">Ventas</div><div class="value">${money(totalVentas)}</div></div>
+      <div class="stat"><div class="label">Gastos</div><div class="value">${money(totalGastos)}</div></div>
+    </div>
+    <div class="row" style="margin-bottom:4px;">
+      <div class="stat ${ganancia>=0?'pos':'neg'}"><div class="label">Ganancia</div><div class="value">${money(ganancia)}</div></div>
+      <div class="stat neg"><div class="label">Por cobrar</div><div class="value">${money(totalPorCobrar)}</div></div>
+    </div>
+
+    <div class="section-title">Registro rápido</div>
+    <div class="row">
+      <button class="btn" onclick="setView('production');openProductionModal()">+ Producción</button>
+      <button class="btn secondary" onclick="setView('sales');openSaleModal()">+ Venta</button>
+    </div>
+  `;
+}
+
+/* ============ PRODUCCIÓN ============ */
+async function renderProduction(){
+  const {data} = await sb.from('production').select('*').order('fecha',{ascending:false}).order('created_at',{ascending:false}).limit(30);
+  const main = document.getElementById('main-content');
+  main.innerHTML = `
+    <button class="btn" style="margin-bottom:16px;" onclick="openProductionModal()">+ Registrar producción</button>
+    <div class="card">
+      ${(!data||data.length===0) ? '<div class="empty">Aún no hay registros de producción.</div>' :
+        data.map(p=>`
+        <div class="list-item">
+          <div>
+            <div><strong>${sizeLabel(p.tamano)}</strong></div>
+            <div class="meta">${fmtDate(p.fecha)}${p.nota?' · '+p.nota:''}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="amount">${p.cartones} cartones</div>
+            <button class="del-x" onclick="deleteRow('production','${p.id}')">✕</button>
+          </div>
+        </div>`).join('')}
+    </div>
+  `;
+}
+
+function openProductionModal(){
+  showModal(`
+    <h2>Registrar producción</h2>
+    <label>Fecha</label>
+    <input type="date" id="pf-fecha" value="${todayISO()}">
+    <label>Tamaño de huevo</label>
+    <select id="pf-tamano">${SIZES.map(s=>`<option value="${s.v}">${s.l}</option>`).join('')}</select>
+    <label>Cartones recolectados</label>
+    <input type="number" id="pf-cartones" placeholder="0" min="0" step="0.5">
+    <label>Nota (opcional)</label>
+    <input type="text" id="pf-nota" placeholder="Ej: menos producción por calor">
+    <button class="btn" onclick="saveProduction(this)">Guardar</button>
+  `);
+}
+async function saveProduction(btn){
+  const fecha = document.getElementById('pf-fecha').value;
+  const tamano = document.getElementById('pf-tamano').value;
+  const cartones = parseFloat(document.getElementById('pf-cartones').value);
+  const nota = document.getElementById('pf-nota').value;
+  if(!cartones && cartones!==0){ alert('Escribe la cantidad de cartones'); return; }
+  await withSaving(btn, async ()=>{
+    const {error} = await sb.from('production').insert({fecha, tamano, cartones, nota});
+    if(error) throw error;
+    closeModal();
+    renderProduction();
+  });
+}
+
+/* ============ VENTAS ============ */
+async function renderSales(){
+  const {data} = await sb.from('sales').select('*, customers(nombre)').order('fecha',{ascending:false}).order('created_at',{ascending:false}).limit(30);
+  const main = document.getElementById('main-content');
+  main.innerHTML = `
+    <button class="btn" style="margin-bottom:16px;" onclick="openSaleModal()">+ Registrar venta</button>
+    <div class="card">
+      ${(!data||data.length===0) ? '<div class="empty">Aún no hay ventas registradas.</div>' :
+        data.map(s=>`
+        <div class="list-item">
+          <div>
+            <div><strong>${s.customers ? s.customers.nombre : 'Cliente eliminado'}</strong></div>
+            <div class="meta">${fmtDate(s.fecha)} · ${sizeLabel(s.tamano)} · ${s.cantidad} ${unidadLabel(s.unidad)}</div>
+            <span class="badge ${s.pagado?'paid':'debt'}">${s.pagado?'Pagado':'Debe'}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="amount">${money(s.total)}</div>
+            <button class="del-x" onclick="deleteRow('sales','${s.id}')">✕</button>
+          </div>
+        </div>`).join('')}
+    </div>
+  `;
+}
+
+function openSaleModal(){
+  showModal(`
+    <h2>Registrar venta</h2>
+    <label>Fecha</label>
+    <input type="date" id="sf-fecha" value="${todayISO()}">
+    <label>Cliente</label>
+    <select id="sf-cliente" onchange="toggleNewClient()">
+      ${state.clients.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('')}
+      <option value="__new__">+ Nuevo cliente…</option>
+    </select>
+    <div id="sf-new-client-wrap" style="display:none;">
+      <label>Nombre del nuevo cliente</label>
+      <input type="text" id="sf-new-client" placeholder="Nombre">
+    </div>
+    <label>Tamaño de huevo</label>
+    <select id="sf-tamano" onchange="recalcSale()">${SIZES.map(s=>`<option value="${s.v}">${s.l}</option>`).join('')}</select>
+    <div class="toggle-group" id="sf-unidad-group">
+      <button type="button" data-u="unidad" onclick="setUnidad('unidad')">Unidad</button>
+      <button type="button" class="selected" data-u="carton" onclick="setUnidad('carton')">Cartón</button>
+      <button type="button" data-u="caja" onclick="setUnidad('caja')">Caja (12 cartones)</button>
+    </div>
+    <label>Cantidad</label>
+    <input type="number" id="sf-cantidad" value="1" min="0.5" step="0.5" oninput="recalcSale()">
+    <label>Precio unitario (Q)</label>
+    <input type="number" id="sf-precio" step="0.01" oninput="recalcTotal()">
+    <label>Total (Q)</label>
+    <input type="number" id="sf-total" step="0.01">
+    <div class="toggle-group">
+      <button type="button" class="selected" data-p="si" onclick="setPagado(true)">Pagó de una vez</button>
+      <button type="button" data-p="no" onclick="setPagado(false)">Queda debiendo</button>
+    </div>
+    <button class="btn" onclick="saveSale(this)">Guardar venta</button>
+  `);
+  saleState.unidad = 'carton';
+  saleState.pagado = true;
+  recalcSale();
+}
+const saleState = {unidad:'carton', pagado:true};
+function toggleNewClient(){
+  const isNew = document.getElementById('sf-cliente').value === '__new__';
+  document.getElementById('sf-new-client-wrap').style.display = isNew ? 'block' : 'none';
+}
+function setUnidad(u){
+  saleState.unidad = u;
+  document.querySelectorAll('#sf-unidad-group button').forEach(b=>b.classList.toggle('selected', b.dataset.u===u));
+  recalcSale();
+}
+function setPagado(v){
+  saleState.pagado = v;
+  document.querySelectorAll('.toggle-group button[data-p]').forEach(b=>b.classList.toggle('selected', (b.dataset.p==='si')===v));
+}
+function recalcSale(){
+  const tamano = document.getElementById('sf-tamano').value;
+  const precio = priceFor(tamano, saleState.unidad);
+  document.getElementById('sf-precio').value = precio;
+  recalcTotal();
+}
+function recalcTotal(){
+  const cant = parseFloat(document.getElementById('sf-cantidad').value)||0;
+  const precio = parseFloat(document.getElementById('sf-precio').value)||0;
+  document.getElementById('sf-total').value = (cant*precio).toFixed(2);
+}
+async function saveSale(btn){
+  const fecha = document.getElementById('sf-fecha').value;
+  let clienteSel = document.getElementById('sf-cliente').value;
+  const tamano = document.getElementById('sf-tamano').value;
+  const cantidad = parseFloat(document.getElementById('sf-cantidad').value);
+  const precio_unitario = parseFloat(document.getElementById('sf-precio').value);
+  const total = parseFloat(document.getElementById('sf-total').value);
+
+  if(clienteSel === '__new__'){
+    const nombre = document.getElementById('sf-new-client').value.trim();
+    if(!nombre){ alert('Escribe el nombre del nuevo cliente'); return; }
+  }
+  if(!cantidad){ alert('Escribe la cantidad'); return; }
+
+  await withSaving(btn, async ()=>{
+    if(clienteSel === '__new__'){
+      const nombre = document.getElementById('sf-new-client').value.trim();
+      const {data, error} = await sb.from('customers').insert({nombre}).select().single();
+      if(error) throw error;
+      clienteSel = data.id;
+      await loadClients();
+    }
+    const {error} = await sb.from('sales').insert({
+      fecha, customer_id: clienteSel, tamano, unidad: saleState.unidad,
+      cantidad, precio_unitario, total, pagado: saleState.pagado
+    });
+    if(error) throw error;
+    closeModal();
+    renderSales();
+  });
+}
+
+/* ============ CLIENTES ============ */
+async function renderClients(){
+  const [{data: sales}, {data: payments}] = await Promise.all([
+    sb.from('sales').select('customer_id, total, pagado'),
+    sb.from('payments').select('customer_id, monto')
+  ]);
+  const debt = {}, paid = {};
+  (sales||[]).forEach(s=>{ if(!s.pagado) debt[s.customer_id]=(debt[s.customer_id]||0)+Number(s.total); });
+  (payments||[]).forEach(p=>{ paid[p.customer_id]=(paid[p.customer_id]||0)+Number(p.monto); });
+
+  const main = document.getElementById('main-content');
+  main.innerHTML = `
+    <button class="btn" style="margin-bottom:16px;" onclick="openNewClientModal()">+ Nuevo cliente</button>
+    <div class="card">
+      ${state.clients.length===0 ? '<div class="empty">Aún no hay clientes.</div>' :
+        state.clients.map(c=>{
+          const balance = (debt[c.id]||0) - (paid[c.id]||0);
+          return `
+          <div class="list-item">
+            <div>
+              <div><strong>${c.nombre}</strong></div>
+              ${c.telefono? `<div class="meta">${c.telefono}</div>`:''}
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="amount" style="color:${balance>0.001?'var(--rust)':'var(--green)'}">${balance>0.001?money(balance)+' debe':'Al día'}</div>
+              ${balance>0.001?`<button class="del-x" style="font-size:13px;" onclick="openPaymentModal('${c.id}','${c.nombre.replace(/'/g,"\\'")}')">Abonar</button>`:''}
+            </div>
+          </div>`;
+        }).join('')}
+    </div>
+  `;
+}
+function openNewClientModal(){
+  showModal(`
+    <h2>Nuevo cliente</h2>
+    <label>Nombre</label>
+    <input type="text" id="nc-nombre" placeholder="Nombre completo">
+    <label>Teléfono (opcional)</label>
+    <input type="text" id="nc-telefono" placeholder="Teléfono">
+    <button class="btn" onclick="saveNewClient(this)">Guardar</button>
+  `);
+}
+async function saveNewClient(btn){
+  const nombre = document.getElementById('nc-nombre').value.trim();
+  const telefono = document.getElementById('nc-telefono').value.trim();
+  if(!nombre){ alert('Escribe el nombre'); return; }
+  await withSaving(btn, async ()=>{
+    const {error} = await sb.from('customers').insert({nombre, telefono});
+    if(error) throw error;
+    await loadClients();
+    closeModal();
+    renderClients();
+  });
+}
+function openPaymentModal(customerId, nombre){
+  showModal(`
+    <h2>Abono de ${nombre}</h2>
+    <label>Fecha</label>
+    <input type="date" id="pay-fecha" value="${todayISO()}">
+    <label>Monto (Q)</label>
+    <input type="number" id="pay-monto" step="0.01" placeholder="0.00">
+    <button class="btn" onclick="savePayment(this,'${customerId}')">Guardar abono</button>
+  `);
+}
+async function savePayment(btn, customerId){
+  const fecha = document.getElementById('pay-fecha').value;
+  const monto = parseFloat(document.getElementById('pay-monto').value);
+  if(!monto){ alert('Escribe el monto'); return; }
+  await withSaving(btn, async ()=>{
+    const {error} = await sb.from('payments').insert({customer_id: customerId, fecha, monto});
+    if(error) throw error;
+    closeModal();
+    renderClients();
+  });
+}
+
+/* ============ GASTOS ============ */
+async function renderExpenses(){
+  const {data} = await sb.from('expenses').select('*').order('fecha',{ascending:false}).order('created_at',{ascending:false}).limit(30);
+  const main = document.getElementById('main-content');
+  main.innerHTML = `
+    <button class="btn" style="margin-bottom:16px;" onclick="openExpenseModal()">+ Registrar gasto</button>
+    <div class="card">
+      ${(!data||data.length===0) ? '<div class="empty">Aún no hay gastos registrados.</div>' :
+        data.map(e=>`
+        <div class="list-item">
+          <div>
+            <div><strong>${e.categoria}</strong></div>
+            <div class="meta">${fmtDate(e.fecha)}${e.descripcion?' · '+e.descripcion:''}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="amount">${money(e.monto)}</div>
+            <button class="del-x" onclick="deleteRow('expenses','${e.id}')">✕</button>
+          </div>
+        </div>`).join('')}
+    </div>
+  `;
+}
+function openExpenseModal(){
+  showModal(`
+    <h2>Registrar gasto</h2>
+    <label>Fecha</label>
+    <input type="date" id="ef-fecha" value="${todayISO()}">
+    <label>Categoría</label>
+    <input type="text" id="ef-categoria" placeholder="Ej: Alimento, Medicina, Transporte" list="cat-list">
+    <datalist id="cat-list">
+      <option value="Alimento"><option value="Medicina/vacunas"><option value="Mantenimiento"><option value="Transporte"><option value="Otro">
+    </datalist>
+    <label>Descripción (opcional)</label>
+    <input type="text" id="ef-descripcion" placeholder="Detalle">
+    <label>Monto (Q)</label>
+    <input type="number" id="ef-monto" step="0.01" placeholder="0.00">
+    <button class="btn" onclick="saveExpense(this)">Guardar</button>
+  `);
+}
+async function saveExpense(btn){
+  const fecha = document.getElementById('ef-fecha').value;
+  const categoria = document.getElementById('ef-categoria').value.trim();
+  const descripcion = document.getElementById('ef-descripcion').value.trim();
+  const monto = parseFloat(document.getElementById('ef-monto').value);
+  if(!categoria || !monto){ alert('Completa categoría y monto'); return; }
+  await withSaving(btn, async ()=>{
+    const {error} = await sb.from('expenses').insert({fecha, categoria, descripcion, monto});
+    if(error) throw error;
+    closeModal();
+    renderExpenses();
+  });
+}
+
+/* ============ ANÁLISIS ============ */
+let analysisPeriod = 30;
+let analysisCharts = {};
+
+function destroyCharts(){
+  Object.values(analysisCharts).forEach(c=>{ if(c) c.destroy(); });
+  analysisCharts = {};
+}
+
+async function renderAnalysis(){
+  const main = document.getElementById('main-content');
+  try{
+    await loadChartJs();
+  } catch(err){
+    main.innerHTML = `<div class="empty">${err.message}</div>`;
+    return;
+  }
+
+  const now = new Date();
+  const start = new Date(now); start.setDate(start.getDate() - (analysisPeriod - 1));
+  const startISO = start.toISOString().slice(0,10);
+  const endISO = todayISO();
+
+  const [salesRes, expRes] = await Promise.all([
+    sb.from('sales').select('fecha, tamano, total').gte('fecha', startISO).lte('fecha', endISO),
+    sb.from('expenses').select('fecha, categoria, monto').gte('fecha', startISO).lte('fecha', endISO)
+  ]);
+  const sales = salesRes.data || [];
+  const expenses = expRes.data || [];
+
+  // Construir serie de días
+  const days = [];
+  for(let d = new Date(start); d <= now; d.setDate(d.getDate()+1)){
+    days.push(d.toISOString().slice(0,10));
+  }
+  const ventasPorDia = {}; days.forEach(d=>ventasPorDia[d]=0);
+  sales.forEach(s=>{ if(ventasPorDia[s.fecha]!==undefined) ventasPorDia[s.fecha]+=Number(s.total); });
+  const gastosPorDia = {}; days.forEach(d=>gastosPorDia[d]=0);
+  expenses.forEach(e=>{ if(gastosPorDia[e.fecha]!==undefined) gastosPorDia[e.fecha]+=Number(e.monto); });
+
+  const ventasPorTamano = {}; SIZES.forEach(s=>ventasPorTamano[s.v]=0);
+  sales.forEach(s=>{ ventasPorTamano[s.tamano]=(ventasPorTamano[s.tamano]||0)+Number(s.total); });
+
+  const gastosPorCategoria = {};
+  expenses.forEach(e=>{ gastosPorCategoria[e.categoria]=(gastosPorCategoria[e.categoria]||0)+Number(e.monto); });
+
+  const totalVentas = sales.reduce((a,s)=>a+Number(s.total),0);
+  const totalGastos = expenses.reduce((a,e)=>a+Number(e.monto),0);
+
+  const dayLabels = days.map(d=>fmtDate(d));
+  const gananciaPorDia = days.map(d=>ventasPorDia[d]-gastosPorDia[d]);
+
+  main.innerHTML = `
+    <div class="period-tabs">
+      <button onclick="analysisPeriod=7;renderAnalysis()" class="${analysisPeriod===7?'selected':''}">7 días</button>
+      <button onclick="analysisPeriod=30;renderAnalysis()" class="${analysisPeriod===30?'selected':''}">30 días</button>
+      <button onclick="analysisPeriod=90;renderAnalysis()" class="${analysisPeriod===90?'selected':''}">90 días</button>
+    </div>
+    <div class="row" style="margin-bottom:14px;">
+      <div class="stat pos"><div class="label">Ventas del periodo</div><div class="value">${money(totalVentas)}</div></div>
+      <div class="stat ${totalVentas-totalGastos>=0?'pos':'neg'}"><div class="label">Ganancia</div><div class="value">${money(totalVentas-totalGastos)}</div></div>
+    </div>
+
+    <div class="section-title">Ventas por día</div>
+    <div class="card"><canvas id="chart-ventas-dia" height="180"></canvas></div>
+
+    <div class="section-title">Ganancia por día</div>
+    <div class="card"><canvas id="chart-ganancia-dia" height="180"></canvas></div>
+
+    <div class="section-title">Ventas por tamaño de huevo</div>
+    <div class="card">${totalVentas>0 ? '<canvas id="chart-tamano" height="200"></canvas>' : '<div class="empty">Sin ventas en este periodo.</div>'}</div>
+
+    <div class="section-title">Gastos por categoría</div>
+    <div class="card">${Object.keys(gastosPorCategoria).length>0 ? '<canvas id="chart-gastos-cat" height="200"></canvas>' : '<div class="empty">Sin gastos en este periodo.</div>'}</div>
+  `;
+
+  destroyCharts();
+  const inkSoft = '#6B5E4C';
+  Chart.defaults.font.family = "'Public Sans', system-ui, sans-serif";
+  Chart.defaults.color = inkSoft;
+
+  analysisCharts.ventasDia = new Chart(document.getElementById('chart-ventas-dia'), {
+    type:'line',
+    data:{ labels: dayLabels, datasets:[{ label:'Ventas (Q)', data: days.map(d=>ventasPorDia[d]), borderColor:'#E3A73A', backgroundColor:'rgba(227,167,58,.18)', fill:true, tension:.3, pointRadius: analysisPeriod>30?0:3 }] },
+    options:{ plugins:{legend:{display:false}}, scales:{ x:{ ticks:{ maxTicksLimit:8 }, grid:{display:false} }, y:{ beginAtZero:true } } }
+  });
+
+  analysisCharts.gananciaDia = new Chart(document.getElementById('chart-ganancia-dia'), {
+    type:'bar',
+    data:{ labels: dayLabels, datasets:[{ label:'Ganancia (Q)', data: gananciaPorDia, backgroundColor: gananciaPorDia.map(v=> v>=0 ? '#3F6B4A' : '#B3462F') }] },
+    options:{ plugins:{legend:{display:false}}, scales:{ x:{ ticks:{ maxTicksLimit:8 }, grid:{display:false} }, y:{ beginAtZero:true } } }
+  });
+
+  if(totalVentas>0){
+    analysisCharts.tamano = new Chart(document.getElementById('chart-tamano'), {
+      type:'bar',
+      data:{ labels: SIZES.map(s=>s.l), datasets:[{ label:'Ventas (Q)', data: SIZES.map(s=>ventasPorTamano[s.v]), backgroundColor:'#3F6B4A', borderRadius:6 }] },
+      options:{ indexAxis:'y', plugins:{legend:{display:false}}, scales:{ x:{ beginAtZero:true } } }
+    });
+  }
+
+  const catLabels = Object.keys(gastosPorCategoria);
+  if(catLabels.length>0){
+    analysisCharts.gastosCat = new Chart(document.getElementById('chart-gastos-cat'), {
+      type:'bar',
+      data:{ labels: catLabels, datasets:[{ label:'Gastos (Q)', data: catLabels.map(c=>gastosPorCategoria[c]), backgroundColor:'#B3462F', borderRadius:6 }] },
+      options:{ indexAxis:'y', plugins:{legend:{display:false}}, scales:{ x:{ beginAtZero:true } } }
+    });
+  }
+}
+
+/* ============ UTILIDADES ============ */
+async function deleteRow(table, id){
+  if(!confirm('¿Eliminar este registro?')) return;
+  const {error} = await sb.from(table).delete().eq('id', id);
+  if(error){ alert('No se pudo eliminar: ' + error.message); return; }
+  setView(state.view);
+}
+function showModal(html){
+  const bg = document.createElement('div');
+  bg.className='modal-bg';
+  bg.id='modal-bg';
+  bg.onclick = (e)=>{ if(e.target.id==='modal-bg') closeModal(); };
+  bg.innerHTML = `<div class="modal" style="position:relative;"><button class="modal-close" onclick="closeModal()">✕</button>${html}</div>`;
+  document.body.appendChild(bg);
+}
+function closeModal(){
+  const m = document.getElementById('modal-bg');
+  if(m) m.remove();
+}
+</script>
+</body>
+</html>
