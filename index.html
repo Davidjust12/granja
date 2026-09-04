@@ -154,7 +154,16 @@ const sizeLabel = v => (SIZES.find(s=>s.v===v)||{}).l || v;
 const unidadLabel = u => u==='caja' ? 'caja(s)' : u==='unidad' ? 'huevo(s)' : 'cartón(es)';
 
 const money = n => new Intl.NumberFormat('es-GT', {style:'currency', currency:'GTQ'}).format(n||0);
-const todayISO = () => new Date().toISOString().slice(0,10);
+// IMPORTANTE: usamos la fecha LOCAL del dispositivo, nunca toISOString() (esa da la fecha en UTC/Inglaterra,
+// lo que en Guatemala se adelanta un día después de las 6pm).
+function localISO(d){
+  d = d || new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+const todayISO = () => localISO(new Date());
 const fmtDate = d => new Date(d+'T00:00:00').toLocaleDateString('es-GT', {day:'2-digit', month:'short'});
 
 let state = { view: 'dashboard', prices: [], clients: [] };
@@ -290,47 +299,59 @@ function periodRange(p){
   const now = new Date();
   let start;
   if(p==='today'){ start = todayISO(); }
-  else if(p==='week'){ const d=new Date(now); d.setDate(d.getDate()-6); start=d.toISOString().slice(0,10); }
-  else { const d=new Date(now); d.setDate(d.getDate()-29); start=d.toISOString().slice(0,10); }
+  else if(p==='week'){ const d=new Date(now); d.setDate(d.getDate()-6); start=localISO(d); }
+  else { const d=new Date(now); d.setDate(d.getDate()-29); start=localISO(d); }
   return {start, end: todayISO()};
 }
 
 async function renderDashboard(){
   const {start, end} = periodRange(dashPeriod);
-  const [salesRes, expRes, debtSalesRes, paymentsRes] = await Promise.all([
+  const [salesRes, expRes, paymentsInRangeRes, debtSalesRes, allPaymentsRes, todayProdRes] = await Promise.all([
     sb.from('sales').select('*').gte('fecha', start).lte('fecha', end),
     sb.from('expenses').select('*').gte('fecha', start).lte('fecha', end),
+    sb.from('payments').select('monto').gte('fecha', start).lte('fecha', end),
     sb.from('sales').select('total, customer_id').eq('pagado', false),
-    sb.from('payments').select('monto, customer_id')
+    sb.from('payments').select('monto, customer_id'),
+    sb.from('production').select('id').eq('fecha', todayISO()).limit(1)
   ]);
   const sales = salesRes.data || [];
   const expenses = expRes.data || [];
-  const totalVentas = sales.reduce((a,s)=>a+Number(s.total),0);
+  const abonosPeriodo = (paymentsInRangeRes.data||[]).reduce((a,p)=>a+Number(p.monto),0);
+  const ventasContado = sales.filter(s=>s.pagado).reduce((a,s)=>a+Number(s.total),0);
+  const efectivo = ventasContado + abonosPeriodo;
   const totalGastos = expenses.reduce((a,e)=>a+Number(e.monto),0);
-  const ganancia = totalVentas - totalGastos;
+  const ganancia = efectivo - totalGastos;
 
   const debtBySales = {}; (debtSalesRes.data||[]).forEach(s=>{ debtBySales[s.customer_id]=(debtBySales[s.customer_id]||0)+Number(s.total); });
-  const paidByCustomer = {}; (paymentsRes.data||[]).forEach(p=>{ paidByCustomer[p.customer_id]=(paidByCustomer[p.customer_id]||0)+Number(p.monto); });
+  const paidByCustomer = {}; (allPaymentsRes.data||[]).forEach(p=>{ paidByCustomer[p.customer_id]=(paidByCustomer[p.customer_id]||0)+Number(p.monto); });
   let totalPorCobrar = 0;
   Object.keys(debtBySales).forEach(cid=>{
     const bal = debtBySales[cid] - (paidByCustomer[cid]||0);
     if(bal>0) totalPorCobrar += bal;
   });
 
+  const horaActual = new Date().getHours();
+  const sinProduccionHoy = (todayProdRes.data||[]).length===0 && horaActual>=12;
+
   const main = document.getElementById('main-content');
   main.innerHTML = `
+    ${sinProduccionHoy ? `
+    <div class="card" style="background:#FDF3E0;border-color:var(--yolk);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div style="font-size:13.5px;"><strong>🥚 Aún no registras producción hoy</strong><br><span style="color:var(--ink-soft);">No olvides anotarla antes de terminar el día.</span></div>
+      <button class="btn" style="width:auto;padding:10px 16px;white-space:nowrap;" onclick="setView('production');openProductionModal()">Anotar</button>
+    </div>` : ''}
     <div class="period-tabs">
       <button onclick="dashPeriod='today';renderDashboard()" class="${dashPeriod==='today'?'selected':''}">Hoy</button>
       <button onclick="dashPeriod='week';renderDashboard()" class="${dashPeriod==='week'?'selected':''}">7 días</button>
       <button onclick="dashPeriod='month';renderDashboard()" class="${dashPeriod==='month'?'selected':''}">30 días</button>
     </div>
     <div class="row" style="margin-bottom:12px;">
-      <div class="stat"><div class="label">Ventas</div><div class="value">${money(totalVentas)}</div></div>
+      <div class="stat pos"><div class="label">Efectivo (contado + abonos)</div><div class="value">${money(efectivo)}</div></div>
       <div class="stat"><div class="label">Gastos</div><div class="value">${money(totalGastos)}</div></div>
     </div>
     <div class="row" style="margin-bottom:4px;">
-      <div class="stat ${ganancia>=0?'pos':'neg'}"><div class="label">Ganancia</div><div class="value">${money(ganancia)}</div></div>
-      <div class="stat neg"><div class="label">Por cobrar</div><div class="value">${money(totalPorCobrar)}</div></div>
+      <div class="stat ${ganancia>=0?'pos':'neg'}"><div class="label">Ganancia (efectivo)</div><div class="value">${money(ganancia)}</div></div>
+      <div class="stat neg"><div class="label">Deuda total por cobrar</div><div class="value">${money(totalPorCobrar)}</div></div>
     </div>
 
     <div class="section-title">Registro rápido</div>
@@ -343,10 +364,55 @@ async function renderDashboard(){
 
 /* ============ PRODUCCIÓN ============ */
 async function renderProduction(){
-  const {data} = await sb.from('production').select('*').order('fecha',{ascending:false}).order('created_at',{ascending:false}).limit(30);
+  const [{data}, {data: todayData}] = await Promise.all([
+    sb.from('production').select('*').order('fecha',{ascending:false}).order('created_at',{ascending:false}).limit(30),
+    sb.from('production').select('*').eq('fecha', todayISO())
+  ]);
+
+  // Resumen del día
+  const resumen = {}; SIZES.forEach(s=>resumen[s.v]={cartones:0, unidades:0, merma:0});
+  (todayData||[]).forEach(p=>{
+    if(!resumen[p.tamano]) resumen[p.tamano]={cartones:0,unidades:0,merma:0};
+    resumen[p.tamano].cartones += Number(p.cartones||0);
+    resumen[p.tamano].unidades += Number(p.unidades_sueltas||0);
+    resumen[p.tamano].merma += Number(p.merma||0);
+  });
+  let totalCartones=0, totalUnidades=0, totalMerma=0, valorEstimado=0;
+  SIZES.forEach(s=>{
+    totalCartones += resumen[s.v].cartones;
+    totalUnidades += resumen[s.v].unidades;
+    totalMerma += resumen[s.v].merma;
+    valorEstimado += resumen[s.v].cartones * priceFor(s.v,'carton') + resumen[s.v].unidades * priceFor(s.v,'unidad');
+  });
+  const hayProduccionHoy = totalCartones>0 || totalUnidades>0 || totalMerma>0;
+
   const main = document.getElementById('main-content');
   main.innerHTML = `
-    <button class="btn" style="margin-bottom:16px;" onclick="openProductionModal()">+ Registrar producción</button>
+    <div class="row" style="margin-bottom:16px;">
+      <button class="btn" onclick="openProductionModal()">+ Registrar producción</button>
+      <button class="btn secondary" onclick="openInventoryModal()">📦 Inventario General</button>
+    </div>
+
+    <div class="section-title">Resumen de hoy</div>
+    <div class="card" style="margin-bottom:16px;">
+      ${!hayProduccionHoy ? '<div class="empty">Aún no has registrado producción hoy.</div>' : `
+        ${SIZES.filter(s=>resumen[s.v].cartones>0||resumen[s.v].unidades>0||resumen[s.v].merma>0).map(s=>`
+          <div class="list-item">
+            <div><strong>${s.l}</strong></div>
+            <div class="meta" style="text-align:right;">
+              ${resumen[s.v].cartones>0?resumen[s.v].cartones+' cartones · ':''}${resumen[s.v].unidades>0?resumen[s.v].unidades+' sueltos · ':''}${resumen[s.v].merma>0?'⚠️ '+resumen[s.v].merma+' picados':''}
+            </div>
+          </div>
+        `).join('')}
+        <div class="list-item" style="border-top:2px solid var(--border);margin-top:6px;padding-top:12px;">
+          <div><strong>Valor estimado de venta</strong></div>
+          <div class="amount" style="color:var(--green);">${money(valorEstimado)}</div>
+        </div>
+        ${totalMerma>0?`<div class="meta" style="margin-top:8px;color:var(--rust);">⚠️ Total de huevos picados hoy: ${totalMerma}</div>`:''}
+      `}
+    </div>
+
+    <div class="section-title">Historial</div>
     <div class="card">
       ${(!data||data.length===0) ? '<div class="empty">Aún no hay registros de producción.</div>' :
         data.map(p=>`
@@ -356,7 +422,10 @@ async function renderProduction(){
             <div class="meta">${fmtDate(p.fecha)}${p.nota?' · '+p.nota:''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:10px;">
-            <div class="amount">${p.cartones} cartones</div>
+            <div style="text-align:right;">
+              <div class="amount">${p.cartones||0} cart.${p.unidades_sueltas?' + '+p.unidades_sueltas+' sueltos':''}</div>
+              ${p.merma>0?`<div class="meta" style="color:var(--rust);">⚠️ ${p.merma} picados</div>`:''}
+            </div>
             <button class="del-x" onclick="deleteRow('production','${p.id}')">✕</button>
           </div>
         </div>`).join('')}
@@ -370,23 +439,54 @@ function openProductionModal(){
     <label>Fecha</label>
     <input type="date" id="pf-fecha" value="${todayISO()}">
     <label>Tamaño de huevo</label>
-    <select id="pf-tamano">${SIZES.map(s=>`<option value="${s.v}">${s.l}</option>`).join('')}</select>
-    <label>Cartones recolectados</label>
-    <input type="number" id="pf-cartones" placeholder="0" min="0" step="0.5">
+    <select id="pf-tamano" onchange="recalcProdValor()">${SIZES.map(s=>`<option value="${s.v}">${s.l}</option>`).join('')}</select>
+    <div class="row">
+      <div>
+        <label>Cartones completos</label>
+        <input type="number" id="pf-cartones" placeholder="0" min="0" step="1" value="0" oninput="recalcProdValor()">
+      </div>
+      <div>
+        <label>Huevos sueltos (no completan cartón)</label>
+        <input type="number" id="pf-unidades" placeholder="0" min="0" step="1" value="0" oninput="recalcProdValor()">
+      </div>
+    </div>
+    <label>Huevos picados / merma (opcional)</label>
+    <input type="number" id="pf-merma" placeholder="0" min="0" step="1" value="0">
+    <div class="empty" style="text-align:left;background:var(--green-soft);border-radius:10px;padding:10px 12px;margin-bottom:14px;">
+      Valor estimado de venta: <strong id="pf-valor-estimado" style="color:var(--green);">Q0.00</strong>
+    </div>
     <label>Nota (opcional)</label>
     <input type="text" id="pf-nota" placeholder="Ej: menos producción por calor">
     <button class="btn" onclick="saveProduction(this)">Guardar</button>
   `);
+  recalcProdValor();
+}
+function recalcProdValor(){
+  const tamano = document.getElementById('pf-tamano').value;
+  const cartones = parseFloat(document.getElementById('pf-cartones').value)||0;
+  const unidades = parseFloat(document.getElementById('pf-unidades').value)||0;
+  const valor = cartones*priceFor(tamano,'carton') + unidades*priceFor(tamano,'unidad');
+  document.getElementById('pf-valor-estimado').textContent = money(valor);
 }
 async function saveProduction(btn){
   const fecha = document.getElementById('pf-fecha').value;
   const tamano = document.getElementById('pf-tamano').value;
-  const cartones = parseFloat(document.getElementById('pf-cartones').value);
+  const cartones = parseFloat(document.getElementById('pf-cartones').value)||0;
+  const unidades_sueltas = parseFloat(document.getElementById('pf-unidades').value)||0;
+  const merma = parseFloat(document.getElementById('pf-merma').value)||0;
   const nota = document.getElementById('pf-nota').value;
-  if(!cartones && cartones!==0){ alert('Escribe la cantidad de cartones'); return; }
+  if(cartones===0 && unidades_sueltas===0 && merma===0){ alert('Escribe al menos una cantidad (cartones, sueltos o merma)'); return; }
   await withSaving(btn, async ()=>{
-    const {error} = await sb.from('production').insert({fecha, tamano, cartones, nota});
+    const {data, error} = await sb.from('production').insert({fecha, tamano, cartones, unidades_sueltas, merma, nota}).select().single();
     if(error) throw error;
+    // Inventario General: la producción suma huevos automáticamente (la merma no cuenta, no es vendible)
+    const huevosProducidos = cartones*30 + unidades_sueltas;
+    if(huevosProducidos>0){
+      await sb.from('inventory_movements').insert({
+        fecha, tipo:'produccion', huevos: huevosProducidos,
+        ref_table:'production', ref_id: data.id
+      });
+    }
     closeModal();
     renderProduction();
   });
@@ -500,11 +600,20 @@ async function saveSale(btn){
       clienteSel = data.id;
       await loadClients();
     }
-    const {error} = await sb.from('sales').insert({
+    const {data, error} = await sb.from('sales').insert({
       fecha, customer_id: clienteSel, tamano, unidad: saleState.unidad,
       cantidad, precio_unitario, total, pagado: saleState.pagado
-    });
+    }).select().single();
     if(error) throw error;
+    // Inventario General: la venta resta huevos automáticamente. Esto NUNCA debe bloquear la venta,
+    // que ya quedó guardada arriba — por eso va en su propio try/catch, en silencio si falla.
+    try{
+      const huevosVendidos = cantidad * (saleState.unidad==='caja'?360 : saleState.unidad==='carton'?30 : 1);
+      await sb.from('inventory_movements').insert({
+        fecha, tipo:'venta', huevos: -huevosVendidos,
+        ref_table:'sales', ref_id: data.id
+      });
+    } catch(invErr){ console.error('Inventario no actualizado:', invErr); }
     closeModal();
     renderSales();
   });
@@ -513,6 +622,12 @@ async function saveSale(btn){
 /* ============ CLIENTES ============ */
 let clientSearch = '';
 let clientSearchFocused = false;
+let debtThreshold = parseFloat(localStorage.getItem('granja_debt_threshold')) || 300;
+function setDebtThreshold(v){
+  debtThreshold = parseFloat(v)||0;
+  localStorage.setItem('granja_debt_threshold', debtThreshold);
+  renderClients();
+}
 async function renderClients(){
   const [{data: sales}, {data: payments}] = await Promise.all([
     sb.from('sales').select('customer_id, total, pagado'),
@@ -523,26 +638,41 @@ async function renderClients(){
   (payments||[]).forEach(p=>{ paid[p.customer_id]=(paid[p.customer_id]||0)+Number(p.monto); });
 
   const term = clientSearch.trim().toLowerCase();
-  const filtered = state.clients.filter(c => c.nombre.toLowerCase().includes(term));
+  const filtered = state.clients
+    .map(c=>({...c, balance: (debt[c.id]||0)-(paid[c.id]||0)}))
+    .filter(c => c.nombre.toLowerCase().includes(term))
+    .sort((a,b)=>{
+      const aAlto = a.balance>debtThreshold, bAlto = b.balance>debtThreshold;
+      if(aAlto!==bAlto) return aAlto?-1:1;
+      return a.nombre.localeCompare(b.nombre);
+    });
+  const countAlto = filtered.filter(c=>c.balance>debtThreshold).length;
 
   const main = document.getElementById('main-content');
   main.innerHTML = `
     <button class="btn" style="margin-bottom:12px;" onclick="openNewClientModal()">+ Nuevo cliente</button>
-    <div style="position:relative;margin-bottom:16px;">
+    <div style="position:relative;margin-bottom:10px;">
       <span style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--ink-soft);">🔍</span>
       <input type="text" id="client-search-input" placeholder="Buscar cliente por nombre…" value="${clientSearch}"
         style="padding-left:38px;margin-bottom:0;"
         oninput="clientSearch=this.value;renderClients();"
         onfocus="clientSearchFocused=true;" onblur="clientSearchFocused=false;">
     </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:13px;color:var(--ink-soft);">
+      <span>⚠️ Avisar si debe más de</span>
+      <input type="number" value="${debtThreshold}" onchange="setDebtThreshold(this.value)" style="width:80px;padding:8px;margin-bottom:0;font-size:13px;">
+      <span>Q</span>
+    </div>
+    ${countAlto>0 ? `<div class="card" style="background:var(--rust-soft);border-color:var(--rust);margin-bottom:14px;padding:12px 16px;"><strong style="color:var(--rust);">⚠️ ${countAlto} cliente${countAlto>1?'s':''} con deuda alta</strong></div>` : ''}
     <div class="card">
       ${filtered.length===0 ? `<div class="empty">${state.clients.length===0?'Aún no hay clientes.':'No se encontró ningún cliente.'}</div>` :
         filtered.map(c=>{
-          const balance = (debt[c.id]||0) - (paid[c.id]||0);
+          const balance = c.balance;
+          const alto = balance>debtThreshold;
           return `
-          <div class="list-item" style="cursor:pointer;" onclick="openClientDetail('${c.id}')">
+          <div class="list-item" style="cursor:pointer;${alto?'background:var(--rust-soft);margin:0 -18px;padding:13px 18px;':''}" onclick="openClientDetail('${c.id}')">
             <div>
-              <div><strong>${c.nombre}</strong></div>
+              <div><strong>${alto?'⚠️ ':''}${c.nombre}</strong></div>
               ${c.telefono? `<div class="meta">${c.telefono}</div>`:''}
             </div>
             <div style="display:flex;align-items:center;gap:10px;">
@@ -795,6 +925,122 @@ async function saveExpense(btn){
   });
 }
 
+/* ============ INVENTARIO GENERAL ============ */
+// Unidad interna: huevo. 1 cartón = 30 huevos. No distingue tamaño ni precio, solo cantidad total.
+function tipoInvLabel(t){ return {inicial:'Inventario inicial', produccion:'Producción', venta:'Venta', ajuste:'Ajuste'}[t] || t; }
+function tipoInvIcon(t){ return {inicial:'🏁', produccion:'🥚', venta:'🧾', ajuste:'✏️'}[t] || '•'; }
+
+function openInventoryModal(){
+  showModal(`<div id="inv-body"><div class="empty">Cargando…</div></div>`);
+  loadInventory();
+}
+async function loadInventory(){
+  const body = document.getElementById('inv-body');
+  const {data, error} = await sb.from('inventory_movements').select('*').order('fecha',{ascending:false}).order('created_at',{ascending:false});
+  if(error){ body.innerHTML = `<div class="empty">Error cargando inventario: ${error.message}</div>`; return; }
+  const movimientos = data || [];
+  const stock = movimientos.reduce((a,m)=>a+Number(m.huevos),0);
+
+  const cartonesStock = Math.floor(stock/30);
+  const sueltosStock = stock - cartonesStock*30;
+  const stockDisplay = stock>=0
+    ? `${cartonesStock} cartones + ${sueltosStock} huevos sueltos`
+    : `${stock} huevos`;
+
+  body.innerHTML = `
+    <h2>📦 Inventario General</h2>
+    <div class="stat ${stock>=0?'pos':'neg'}" style="margin-bottom:16px;">
+      <div class="label">Stock actual (en huevos)</div>
+      <div class="value">${stock<0?'⚠️ ':''}${stockDisplay}</div>
+      ${stock<0?'<div class="meta" style="color:var(--rust);margin-top:6px;">El inventario quedó negativo — probablemente falta registrar producción, o el inventario inicial no se cargó todavía.</div>':''}
+    </div>
+    <div class="row" style="margin-bottom:16px;">
+      <button class="btn secondary" onclick="openInventoryInitialModal()">🏁 Inventario inicial</button>
+      <button class="btn ghost" onclick="openInventoryAdjustModal()">✏️ Ajuste manual</button>
+    </div>
+    <div class="section-title">Historial de movimientos</div>
+    <div class="card" style="max-height:320px;overflow-y:auto;">
+      ${movimientos.length===0 ? '<div class="empty">Sin movimientos todavía.</div>' :
+        movimientos.slice(0,60).map(m=>`
+        <div class="list-item">
+          <div>
+            <div><strong>${tipoInvIcon(m.tipo)} ${tipoInvLabel(m.tipo)}</strong></div>
+            <div class="meta">${fmtDate(m.fecha)}${m.motivo?' · '+m.motivo:''}</div>
+          </div>
+          <div class="amount" style="color:${Number(m.huevos)>=0?'var(--green)':'var(--rust)'}">${Number(m.huevos)>=0?'+':''}${m.huevos} huevos</div>
+        </div>`).join('')}
+    </div>
+  `;
+}
+
+function openInventoryInitialModal(){
+  showModal(`
+    <h2>Inventario inicial</h2>
+    <div class="empty" style="text-align:left;padding:0 0 10px;">Cuenta físicamente cuántos cartones y huevos sueltos tienes ahora mismo, y regístralo aquí.</div>
+    <div class="row">
+      <div><label>Cartones</label><input type="number" id="inv-i-cartones" value="0" min="0" step="1"></div>
+      <div><label>Huevos sueltos</label><input type="number" id="inv-i-sueltos" value="0" min="0" step="1"></div>
+    </div>
+    <label>Fecha</label>
+    <input type="date" id="inv-i-fecha" value="${todayISO()}">
+    <button class="btn" onclick="saveInventoryInitial(this)">Guardar inventario inicial</button>
+  `);
+}
+async function saveInventoryInitial(btn){
+  const cartones = parseFloat(document.getElementById('inv-i-cartones').value)||0;
+  const sueltos = parseFloat(document.getElementById('inv-i-sueltos').value)||0;
+  const fecha = document.getElementById('inv-i-fecha').value;
+  const huevos = cartones*30 + sueltos;
+  if(huevos===0){ alert('Escribe alguna cantidad'); return; }
+  await withSaving(btn, async ()=>{
+    const {error} = await sb.from('inventory_movements').insert({fecha, tipo:'inicial', huevos});
+    if(error) throw error;
+    closeModal();
+    openInventoryModal();
+  });
+}
+
+let invAdjustSign = 1;
+function openInventoryAdjustModal(){
+  invAdjustSign = 1;
+  showModal(`
+    <h2>Ajuste manual</h2>
+    <div class="toggle-group" id="inv-a-sign-group">
+      <button type="button" class="selected" data-sign="1" onclick="setInvAdjustSign(1)">Entrada (+)</button>
+      <button type="button" data-sign="-1" onclick="setInvAdjustSign(-1)">Salida (−)</button>
+    </div>
+    <div class="row">
+      <div><label>Cartones</label><input type="number" id="inv-a-cartones" value="0" min="0" step="1"></div>
+      <div><label>Huevos sueltos</label><input type="number" id="inv-a-sueltos" value="0" min="0" step="1"></div>
+    </div>
+    <label>Fecha</label>
+    <input type="date" id="inv-a-fecha" value="${todayISO()}">
+    <label>Motivo (obligatorio)</label>
+    <input type="text" id="inv-a-motivo" placeholder="Ej: conteo físico, huevos dañados no registrados, error de captura">
+    <button class="btn" onclick="saveInventoryAdjust(this)">Guardar ajuste</button>
+  `);
+}
+function setInvAdjustSign(v){
+  invAdjustSign = v;
+  document.querySelectorAll('#inv-a-sign-group button').forEach(b=>b.classList.toggle('selected', Number(b.dataset.sign)===v));
+}
+async function saveInventoryAdjust(btn){
+  const cartones = parseFloat(document.getElementById('inv-a-cartones').value)||0;
+  const sueltos = parseFloat(document.getElementById('inv-a-sueltos').value)||0;
+  const fecha = document.getElementById('inv-a-fecha').value;
+  const motivo = document.getElementById('inv-a-motivo').value.trim();
+  const cantidad = cartones*30 + sueltos;
+  if(cantidad===0){ alert('Escribe alguna cantidad'); return; }
+  if(!motivo){ alert('Escribe el motivo del ajuste'); return; }
+  const huevos = cantidad * invAdjustSign;
+  await withSaving(btn, async ()=>{
+    const {error} = await sb.from('inventory_movements').insert({fecha, tipo:'ajuste', huevos, motivo});
+    if(error) throw error;
+    closeModal();
+    openInventoryModal();
+  });
+}
+
 /* ============ ANÁLISIS ============ */
 let analysisPeriod = 30;
 let analysisCharts = {};
@@ -815,23 +1061,32 @@ async function renderAnalysis(){
 
   const now = new Date();
   const start = new Date(now); start.setDate(start.getDate() - (analysisPeriod - 1));
-  const startISO = start.toISOString().slice(0,10);
+  const startISO = localISO(start);
   const endISO = todayISO();
 
-  const [salesRes, expRes] = await Promise.all([
-    sb.from('sales').select('fecha, tamano, total').gte('fecha', startISO).lte('fecha', endISO),
-    sb.from('expenses').select('fecha, categoria, monto').gte('fecha', startISO).lte('fecha', endISO)
+  const [salesRes, expRes, paymentsRes, debtSalesRes, allPaymentsRes, prodRes] = await Promise.all([
+    sb.from('sales').select('fecha, tamano, total, pagado, unidad, cantidad').gte('fecha', startISO).lte('fecha', endISO),
+    sb.from('expenses').select('fecha, categoria, monto').gte('fecha', startISO).lte('fecha', endISO),
+    sb.from('payments').select('fecha, monto').gte('fecha', startISO).lte('fecha', endISO),
+    sb.from('sales').select('total, customer_id').eq('pagado', false),
+    sb.from('payments').select('monto, customer_id'),
+    sb.from('production').select('*').gte('fecha', startISO).lte('fecha', endISO)
   ]);
   const sales = salesRes.data || [];
   const expenses = expRes.data || [];
+  const payments = paymentsRes.data || [];
+  const production = prodRes.data || [];
 
-  // Construir serie de días
+  // Construir serie de días (fecha LOCAL, no UTC)
   const days = [];
-  for(let d = new Date(start); d <= now; d.setDate(d.getDate()+1)){
-    days.push(d.toISOString().slice(0,10));
+  for(let d = new Date(start); localISO(d) <= endISO; d.setDate(d.getDate()+1)){
+    days.push(localISO(d));
   }
-  const ventasPorDia = {}; days.forEach(d=>ventasPorDia[d]=0);
-  sales.forEach(s=>{ if(ventasPorDia[s.fecha]!==undefined) ventasPorDia[s.fecha]+=Number(s.total); });
+
+  const efectivoPorDia = {}; days.forEach(d=>efectivoPorDia[d]=0);
+  sales.forEach(s=>{ if(s.pagado && efectivoPorDia[s.fecha]!==undefined) efectivoPorDia[s.fecha]+=Number(s.total); });
+  payments.forEach(p=>{ if(efectivoPorDia[p.fecha]!==undefined) efectivoPorDia[p.fecha]+=Number(p.monto); });
+
   const gastosPorDia = {}; days.forEach(d=>gastosPorDia[d]=0);
   expenses.forEach(e=>{ if(gastosPorDia[e.fecha]!==undefined) gastosPorDia[e.fecha]+=Number(e.monto); });
 
@@ -843,9 +1098,30 @@ async function renderAnalysis(){
 
   const totalVentas = sales.reduce((a,s)=>a+Number(s.total),0);
   const totalGastos = expenses.reduce((a,e)=>a+Number(e.monto),0);
+  const totalEfectivo = days.reduce((a,d)=>a+efectivoPorDia[d],0);
+  const gananciaEfectivo = totalEfectivo - totalGastos;
+
+  // Margen de ganancia real: costo estimado por cartón producido vs precio promedio al que se vende
+  const totalCartonesProducidos = production.reduce((a,p)=>a+Number(p.cartones||0),0);
+  const costoPorCarton = totalCartonesProducidos>0 ? totalGastos/totalCartonesProducidos : null;
+  const ventasCarton = sales.filter(s=>s.unidad==='carton');
+  const totalCartonesVendidos = ventasCarton.reduce((a,s)=>a+Number(s.cantidad),0);
+  const totalQCartonesVendidos = ventasCarton.reduce((a,s)=>a+Number(s.total),0);
+  const precioPromedioCarton = totalCartonesVendidos>0 ? totalQCartonesVendidos/totalCartonesVendidos : null;
+  const margenPorCarton = (costoPorCarton!==null && precioPromedioCarton!==null) ? precioPromedioCarton-costoPorCarton : null;
+  const margenPorcentaje = totalEfectivo>0 ? (gananciaEfectivo/totalEfectivo*100) : null;
+
+  // Deuda total actual (a hoy, no depende del periodo — es el saldo pendiente de todos los clientes)
+  const debtBySales = {}; (debtSalesRes.data||[]).forEach(s=>{ debtBySales[s.customer_id]=(debtBySales[s.customer_id]||0)+Number(s.total); });
+  const paidByCustomer = {}; (allPaymentsRes.data||[]).forEach(p=>{ paidByCustomer[p.customer_id]=(paidByCustomer[p.customer_id]||0)+Number(p.monto); });
+  let deudaTotal = 0;
+  Object.keys(debtBySales).forEach(cid=>{
+    const bal = debtBySales[cid] - (paidByCustomer[cid]||0);
+    if(bal>0) deudaTotal += bal;
+  });
 
   const dayLabels = days.map(d=>fmtDate(d));
-  const gananciaPorDia = days.map(d=>ventasPorDia[d]-gastosPorDia[d]);
+  const gananciaPorDia = days.map(d=>efectivoPorDia[d]-gastosPorDia[d]);
 
   main.innerHTML = `
     <div class="period-tabs">
@@ -853,18 +1129,34 @@ async function renderAnalysis(){
       <button onclick="analysisPeriod=30;renderAnalysis()" class="${analysisPeriod===30?'selected':''}">30 días</button>
       <button onclick="analysisPeriod=90;renderAnalysis()" class="${analysisPeriod===90?'selected':''}">90 días</button>
     </div>
+    <div class="row" style="margin-bottom:10px;">
+      <div class="stat pos"><div class="label">Efectivo (contado + abonos)</div><div class="value">${money(totalEfectivo)}</div></div>
+      <div class="stat neg"><div class="label">Deuda total (por cobrar)</div><div class="value">${money(deudaTotal)}</div></div>
+    </div>
     <div class="row" style="margin-bottom:14px;">
-      <div class="stat pos"><div class="label">Ventas del periodo</div><div class="value">${money(totalVentas)}</div></div>
-      <div class="stat ${totalVentas-totalGastos>=0?'pos':'neg'}"><div class="label">Ganancia</div><div class="value">${money(totalVentas-totalGastos)}</div></div>
+      <div class="stat"><div class="label">Gastos del periodo</div><div class="value">${money(totalGastos)}</div></div>
+      <div class="stat ${gananciaEfectivo>=0?'pos':'neg'}"><div class="label">Ganancia (efectivo)</div><div class="value">${money(gananciaEfectivo)}</div></div>
+    </div>
+    <div class="empty" style="text-align:left;font-size:12.5px;padding:0 0 16px;">💡 <strong>Efectivo</strong> = ventas al contado + abonos recibidos en el periodo. <strong>Deuda</strong> = todo lo que los clientes deben hoy (no cambia por periodo). <strong>Ganancia</strong> = efectivo − gastos.</div>
+
+    <div class="section-title">Margen de ganancia real</div>
+    <div class="card" style="margin-bottom:16px;">
+      ${margenPorcentaje!==null ? `<div class="list-item"><div>De cada Q1 que entra en efectivo</div><div class="amount" style="color:${margenPorcentaje>=0?'var(--green)':'var(--rust)'}">${margenPorcentaje.toFixed(0)}% es ganancia</div></div>` : ''}
+      ${costoPorCarton!==null ? `<div class="list-item"><div>Costo estimado por cartón producido</div><div class="amount">${money(costoPorCarton)}</div></div>` : '<div class="empty" style="padding:8px 0;">Registra producción en este periodo para ver el costo por cartón.</div>'}
+      ${precioPromedioCarton!==null ? `<div class="list-item"><div>Precio promedio al que vendes el cartón</div><div class="amount">${money(precioPromedioCarton)}</div></div>` : ''}
+      ${margenPorCarton!==null ? `<div class="list-item"><div><strong>Ganancia estimada por cartón</strong></div><div class="amount" style="color:${margenPorCarton>=0?'var(--green)':'var(--rust)'}">${money(margenPorCarton)}</div></div>` : ''}
+      <div class="empty" style="text-align:left;font-size:11.5px;padding-top:6px;">*Costo por cartón = todos los gastos del periodo ÷ cartones producidos. Es un estimado general, no separa gastos por tamaño de huevo.</div>
     </div>
 
-    <div class="section-title">Ventas por día</div>
+    <button class="btn secondary" style="margin-bottom:16px;" onclick="openMonthlySummaryModal()">📅 Ver resumen mensual</button>
+
+    <div class="section-title">Efectivo por día</div>
     <div class="card"><canvas id="chart-ventas-dia" height="180"></canvas></div>
 
     <div class="section-title">Ganancia por día</div>
     <div class="card"><canvas id="chart-ganancia-dia" height="180"></canvas></div>
 
-    <div class="section-title">Ventas por tamaño de huevo</div>
+    <div class="section-title">Ventas por tamaño de huevo (contado + crédito)</div>
     <div class="card">${totalVentas>0 ? '<canvas id="chart-tamano" height="200"></canvas>' : '<div class="empty">Sin ventas en este periodo.</div>'}</div>
 
     <div class="section-title">Gastos por categoría</div>
@@ -878,7 +1170,7 @@ async function renderAnalysis(){
 
   analysisCharts.ventasDia = new Chart(document.getElementById('chart-ventas-dia'), {
     type:'line',
-    data:{ labels: dayLabels, datasets:[{ label:'Ventas (Q)', data: days.map(d=>ventasPorDia[d]), borderColor:'#E3A73A', backgroundColor:'rgba(227,167,58,.18)', fill:true, tension:.3, pointRadius: analysisPeriod>30?0:3 }] },
+    data:{ labels: dayLabels, datasets:[{ label:'Efectivo (Q)', data: days.map(d=>efectivoPorDia[d]), borderColor:'#E3A73A', backgroundColor:'rgba(227,167,58,.18)', fill:true, tension:.3, pointRadius: analysisPeriod>30?0:3 }] },
     options:{ plugins:{legend:{display:false}}, scales:{ x:{ ticks:{ maxTicksLimit:8 }, grid:{display:false} }, y:{ beginAtZero:true } } }
   });
 
@@ -903,6 +1195,135 @@ async function renderAnalysis(){
       data:{ labels: catLabels, datasets:[{ label:'Gastos (Q)', data: catLabels.map(c=>gastosPorCategoria[c]), backgroundColor:'#B3462F', borderRadius:6 }] },
       options:{ indexAxis:'y', plugins:{legend:{display:false}}, scales:{ x:{ beginAtZero:true } } }
     });
+  }
+}
+
+/* ============ RESUMEN MENSUAL ============ */
+function currentMonthValue(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+function openMonthlySummaryModal(){
+  showModal(`
+    <h2>Resumen mensual</h2>
+    <label>Mes</label>
+    <input type="month" id="ms-mes" value="${currentMonthValue()}" onchange="loadMonthlySummary()">
+    <div id="ms-body"><div class="empty">Cargando…</div></div>
+  `);
+  loadMonthlySummary();
+}
+async function loadMonthlySummary(){
+  const body = document.getElementById('ms-body');
+  body.innerHTML = '<div class="empty">Cargando…</div>';
+  const monthVal = document.getElementById('ms-mes').value; // "2026-08"
+  const [y,m] = monthVal.split('-').map(Number);
+  const startISO = `${monthVal}-01`;
+  const lastDay = new Date(y, m, 0).getDate();
+  const todayStr = todayISO();
+  const naturalEnd = `${monthVal}-${String(lastDay).padStart(2,'0')}`;
+  const endISO = naturalEnd < todayStr ? naturalEnd : todayStr; // no mostrar días futuros del mes actual
+
+  const [salesRes, expRes, paymentsRes, prodRes, debtSalesAllRes, paymentsAllRes] = await Promise.all([
+    sb.from('sales').select('*').gte('fecha', startISO).lte('fecha', endISO),
+    sb.from('expenses').select('*').gte('fecha', startISO).lte('fecha', endISO),
+    sb.from('payments').select('*').gte('fecha', startISO).lte('fecha', endISO),
+    sb.from('production').select('*').gte('fecha', startISO).lte('fecha', endISO),
+    sb.from('sales').select('total, customer_id').eq('pagado', false).lte('fecha', endISO),
+    sb.from('payments').select('monto, customer_id').lte('fecha', endISO)
+  ]);
+  const sales = salesRes.data || [];
+  const expenses = expRes.data || [];
+  const payments = paymentsRes.data || [];
+  const production = prodRes.data || [];
+
+  const ventasContado = sales.filter(s=>s.pagado).reduce((a,s)=>a+Number(s.total),0);
+  const ventasCredito = sales.filter(s=>!s.pagado).reduce((a,s)=>a+Number(s.total),0);
+  const abonos = payments.reduce((a,p)=>a+Number(p.monto),0);
+  const efectivo = ventasContado + abonos;
+  const totalGastos = expenses.reduce((a,e)=>a+Number(e.monto),0);
+  const ganancia = efectivo - totalGastos;
+
+  const prodPorTamano = {}; SIZES.forEach(s=>prodPorTamano[s.v]={cartones:0,unidades:0,merma:0});
+  production.forEach(p=>{
+    if(!prodPorTamano[p.tamano]) prodPorTamano[p.tamano]={cartones:0,unidades:0,merma:0};
+    prodPorTamano[p.tamano].cartones += Number(p.cartones||0);
+    prodPorTamano[p.tamano].unidades += Number(p.unidades_sueltas||0);
+    prodPorTamano[p.tamano].merma += Number(p.merma||0);
+  });
+
+  // Deuda al cierre del mes (histórica: solo movimientos hasta endISO)
+  const debtBySales = {}; (debtSalesAllRes.data||[]).forEach(s=>{ debtBySales[s.customer_id]=(debtBySales[s.customer_id]||0)+Number(s.total); });
+  const paidByCustomer = {}; (paymentsAllRes.data||[]).forEach(p=>{ paidByCustomer[p.customer_id]=(paidByCustomer[p.customer_id]||0)+Number(p.monto); });
+  let deudaAlCierre = 0;
+  Object.keys(debtBySales).forEach(cid=>{ const bal=debtBySales[cid]-(paidByCustomer[cid]||0); if(bal>0) deudaAlCierre+=bal; });
+
+  const monthName = new Date(y, m-1, 1).toLocaleDateString('es-GT', {month:'long', year:'numeric'});
+  window.__monthlySummaryData = {monthName, ventasContado, ventasCredito, abonos, efectivo, totalGastos, ganancia, prodPorTamano, deudaAlCierre};
+
+  const bodyEl = document.getElementById('ms-body');
+  bodyEl.innerHTML = `
+    <div class="section-title" style="margin-top:6px;">Producción del mes</div>
+    <div class="card" style="margin-bottom:14px;">
+      ${SIZES.filter(s=>prodPorTamano[s.v].cartones>0||prodPorTamano[s.v].unidades>0).map(s=>`
+        <div class="list-item"><div>${s.l}</div><div class="meta">${prodPorTamano[s.v].cartones} cartones${prodPorTamano[s.v].unidades?' + '+prodPorTamano[s.v].unidades+' sueltos':''}${prodPorTamano[s.v].merma?' · ⚠️ '+prodPorTamano[s.v].merma+' picados':''}</div></div>
+      `).join('') || '<div class="empty">Sin producción registrada.</div>'}
+    </div>
+    <div class="section-title">Dinero del mes</div>
+    <div class="card">
+      <div class="list-item"><div>Ventas al contado</div><div class="amount">${money(ventasContado)}</div></div>
+      <div class="list-item"><div>Ventas al crédito (fiado)</div><div class="amount">${money(ventasCredito)}</div></div>
+      <div class="list-item"><div>Abonos recibidos</div><div class="amount">${money(abonos)}</div></div>
+      <div class="list-item"><div><strong>Efectivo total</strong></div><div class="amount" style="color:var(--green);">${money(efectivo)}</div></div>
+      <div class="list-item"><div>Gastos</div><div class="amount">${money(totalGastos)}</div></div>
+      <div class="list-item"><div><strong>Ganancia</strong></div><div class="amount" style="color:${ganancia>=0?'var(--green)':'var(--rust)'}">${money(ganancia)}</div></div>
+      <div class="list-item"><div>Deuda pendiente al cierre</div><div class="amount" style="color:var(--rust);">${money(deudaAlCierre)}</div></div>
+    </div>
+    <button class="btn" style="margin-top:16px;" onclick="downloadMonthlySummary(this)">📥 Descargar resumen (imagen)</button>
+  `;
+}
+async function downloadMonthlySummary(btn){
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Generando…';
+  try{
+    await loadHtml2Canvas();
+    const d = window.__monthlySummaryData;
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:420px;background:#FFFFFF;font-family:"Public Sans",system-ui,sans-serif;color:#2A2118;padding:24px;';
+    wrap.innerHTML = `
+      <div style="font-family:'Fraunces',serif;font-size:22px;font-weight:700;margin-bottom:2px;">🥚 Granja</div>
+      <div style="font-size:16px;font-weight:700;text-transform:capitalize;margin-bottom:18px;">Resumen de ${d.monthName}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <tr style="border-bottom:1px solid #E5D9C2;"><td style="padding:7px 4px;">Ventas al contado</td><td style="padding:7px 4px;text-align:right;">${money(d.ventasContado)}</td></tr>
+        <tr style="border-bottom:1px solid #E5D9C2;"><td style="padding:7px 4px;">Ventas al crédito</td><td style="padding:7px 4px;text-align:right;">${money(d.ventasCredito)}</td></tr>
+        <tr style="border-bottom:1px solid #E5D9C2;"><td style="padding:7px 4px;">Abonos recibidos</td><td style="padding:7px 4px;text-align:right;">${money(d.abonos)}</td></tr>
+        <tr style="border-bottom:2px solid #2A2118;"><td style="padding:7px 4px;font-weight:700;">Efectivo total</td><td style="padding:7px 4px;text-align:right;font-weight:700;">${money(d.efectivo)}</td></tr>
+        <tr style="border-bottom:1px solid #E5D9C2;"><td style="padding:7px 4px;">Gastos</td><td style="padding:7px 4px;text-align:right;">${money(d.totalGastos)}</td></tr>
+      </table>
+      <div style="margin-top:14px;padding:14px;background:${d.ganancia>=0?'#E7EFE7':'#FBEAE6'};border-radius:10px;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-weight:700;">Ganancia del mes</span>
+        <span style="font-family:'Fraunces',serif;font-weight:700;font-size:18px;color:${d.ganancia>=0?'#3F6B4A':'#B3462F'};">${money(d.ganancia)}</span>
+      </div>
+      <div style="margin-top:10px;padding:14px;background:#FBEAE6;border-radius:10px;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-weight:700;">Deuda pendiente al cierre</span>
+        <span style="font-family:'Fraunces',serif;font-weight:700;font-size:18px;color:#B3462F;">${money(d.deudaAlCierre)}</span>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+    const canvas = await html2canvas(wrap, {backgroundColor:'#FFFFFF', scale:2});
+    document.body.removeChild(wrap);
+    const fileName = `resumen_${d.monthName.replace(/\s+/g,'_')}.png`;
+    canvas.toBlob((blob)=>{
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = fileName;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 'image/png');
+  } catch(err){
+    console.error(err);
+    alert('No se pudo generar el resumen.\n\nError: ' + (err && err.message || 'desconocido'));
+  } finally {
+    btn.disabled = false; btn.textContent = original;
   }
 }
 
@@ -972,6 +1393,11 @@ async function deleteRow(table, id){
   if(!confirm('¿Eliminar este registro?')) return;
   const {error} = await sb.from(table).delete().eq('id', id);
   if(error){ alert('No se pudo eliminar: ' + error.message); return; }
+  // Si era producción o venta, borramos también su movimiento de Inventario General para que el stock no quede desfasado
+  if(table==='production' || table==='sales'){
+    try{ await sb.from('inventory_movements').delete().eq('ref_table', table).eq('ref_id', id); }
+    catch(e){ console.error('No se pudo limpiar el movimiento de inventario:', e); }
+  }
   setView(state.view);
 }
 function showModal(html){
