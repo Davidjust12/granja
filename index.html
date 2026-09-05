@@ -333,12 +333,21 @@ async function renderDashboard(){
   const horaActual = new Date().getHours();
   const sinProduccionHoy = (todayProdRes.data||[]).length===0 && horaActual>=12;
 
+  const lastBackup = localStorage.getItem('granja_last_backup');
+  const diasSinRespaldo = lastBackup ? Math.floor((new Date(todayISO())-new Date(lastBackup))/86400000) : 999;
+  const respaldoAtrasado = diasSinRespaldo >= 7;
+
   const main = document.getElementById('main-content');
   main.innerHTML = `
     ${sinProduccionHoy ? `
     <div class="card" style="background:#FDF3E0;border-color:var(--yolk);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
       <div style="font-size:13.5px;"><strong>🥚 Aún no registras producción hoy</strong><br><span style="color:var(--ink-soft);">No olvides anotarla antes de terminar el día.</span></div>
       <button class="btn" style="width:auto;padding:10px 16px;white-space:nowrap;" onclick="setView('production');openProductionModal()">Anotar</button>
+    </div>` : ''}
+    ${respaldoAtrasado ? `
+    <div class="card" style="background:#FBEAE6;border-color:var(--rust);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div style="font-size:13.5px;"><strong>📥 ${lastBackup?'Ya pasaron '+diasSinRespaldo+' días':'Aún no has descargado ningún respaldo'}</strong><br><span style="color:var(--ink-soft);">Guarda una copia de tu información por seguridad.</span></div>
+      <button class="btn" style="width:auto;padding:10px 16px;white-space:nowrap;background:var(--rust);" onclick="downloadBackup(this)">Descargar</button>
     </div>` : ''}
     <div class="period-tabs">
       <button onclick="dashPeriod='today';renderDashboard()" class="${dashPeriod==='today'?'selected':''}">Hoy</button>
@@ -741,7 +750,7 @@ async function renderClients(){
             </div>
             <div style="display:flex;align-items:center;gap:10px;">
               <div class="amount" style="color:${bi.color}">${bi.text}</div>
-              <button onclick="event.stopPropagation();openPaymentModal('${c.id}','${c.nombre.replace(/'/g,"\\'")}')" style="background:var(--green);color:#fff;border:none;border-radius:20px;padding:9px 16px;font-size:13px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(63,107,74,.25);">💰 Abonar</button>
+              ${Math.abs(balance)>0.001?`<button onclick="event.stopPropagation();openPaymentModal('${c.id}','${c.nombre.replace(/'/g,"\\'")}')" style="background:var(--green);color:#fff;border:none;border-radius:20px;padding:9px 16px;font-size:13px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(63,107,74,.25);">💰 Abonar</button>`:''}
             </div>
           </div>`;
         }).join('')}
@@ -840,7 +849,7 @@ async function openClientDetail(customerId){
       <div class="value">${bi.text}</div>
     </div>
     <div class="row" style="margin-bottom:16px;">
-      <button onclick="closeModal();openPaymentModal('${client.id}','${client.nombre.replace(/'/g,"\\'")}',true)" style="background:var(--green);color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;box-shadow:0 2px 6px rgba(63,107,74,.25);">💰 Abonar</button>
+      ${Math.abs(balanceFinal)>0.001?`<button onclick="closeModal();openPaymentModal('${client.id}','${client.nombre.replace(/'/g,"\\'")}',true)" style="background:var(--green);color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;box-shadow:0 2px 6px rgba(63,107,74,.25);">💰 Abonar</button>`:''}
       <button class="btn ghost" onclick="downloadClientReport(this)">📄 Reporte</button>
     </div>
     <div class="section-title">Historial completo</div>
@@ -1415,18 +1424,19 @@ async function downloadBackup(btn){
   try{
     await loadXLSX();
 
-    const [production, sales, clients, payments, expenses, prices] = await Promise.all([
-      sb.from('production').select('fecha, tamano, cartones, nota').order('fecha'),
+    const [production, sales, clients, payments, expenses, prices, inventory] = await Promise.all([
+      sb.from('production').select('fecha, tamano, cartones, unidades_sueltas, merma, nota').order('fecha'),
       sb.from('sales').select('fecha, tamano, unidad, cantidad, precio_unitario, total, pagado, customers(nombre)').order('fecha'),
       sb.from('customers').select('nombre, telefono').order('nombre'),
       sb.from('payments').select('fecha, monto, customers(nombre)').order('fecha'),
       sb.from('expenses').select('fecha, categoria, descripcion, monto').order('fecha'),
-      sb.from('prices').select('tamano, precio_unidad, precio_carton, precio_caja')
+      sb.from('prices').select('tamano, precio_unidad, precio_carton, precio_caja'),
+      sb.from('inventory_movements').select('fecha, tipo, huevos, motivo').order('fecha')
     ]);
 
     const wb = XLSX.utils.book_new();
 
-    const prodRows = (production.data||[]).map(p=>({Fecha:p.fecha, Tamaño:sizeLabel(p.tamano), Cartones:p.cartones, Nota:p.nota||''}));
+    const prodRows = (production.data||[]).map(p=>({Fecha:p.fecha, Tamaño:sizeLabel(p.tamano), Cartones:p.cartones, 'Unidades sueltas':p.unidades_sueltas||0, Merma:p.merma||0, Nota:p.nota||''}));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(prodRows), 'Producción');
 
     const saleRows = (sales.data||[]).map(s=>({
@@ -1448,7 +1458,11 @@ async function downloadBackup(btn){
     const priceRows = (prices.data||[]).map(p=>({Tamaño:sizeLabel(p.tamano), 'Precio unidad':p.precio_unidad, 'Precio cartón':p.precio_carton, 'Precio caja':p.precio_caja}));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(priceRows), 'Precios');
 
+    const invRows = (inventory.data||[]).map(m=>({Fecha:m.fecha, Tipo:tipoInvLabel(m.tipo), Huevos:m.huevos, Motivo:m.motivo||''}));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(invRows), 'Inventario');
+
     XLSX.writeFile(wb, `respaldo_granja_${todayISO()}.xlsx`);
+    localStorage.setItem('granja_last_backup', todayISO());
   } catch(err){
     console.error(err);
     alert('No se pudo generar el respaldo.\n\nError: ' + (err && err.message || 'desconocido'));
