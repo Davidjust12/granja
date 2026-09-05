@@ -353,12 +353,65 @@ async function renderDashboard(){
       <div class="stat ${ganancia>=0?'pos':'neg'}"><div class="label">Ganancia (efectivo)</div><div class="value">${money(ganancia)}</div></div>
       <div class="stat neg"><div class="label">Deuda total por cobrar</div><div class="value">${money(totalPorCobrar)}</div></div>
     </div>
+    ${dashPeriod==='today' ? `<div class="empty" style="text-align:left;font-size:12px;padding:0 0 4px;">💡 El efectivo de "Hoy" es solo de hoy — mañana este número vuelve a empezar en Q0.00.</div>` : ''}
+
+    <button class="btn secondary" style="margin:10px 0 16px;" onclick="openDailySummaryModal()">📋 Ver movimientos de hoy</button>
 
     <div class="section-title">Registro rápido</div>
     <div class="row">
       <button class="btn" onclick="setView('production');openProductionModal()">+ Producción</button>
       <button class="btn secondary" onclick="setView('sales');openSaleModal()">+ Venta</button>
     </div>
+  `;
+}
+
+/* ============ RESUMEN DEL DÍA (para cuadrar caja) ============ */
+async function openDailySummaryModal(){
+  showModal(`<div id="daily-summary-body"><div class="empty">Cargando…</div></div>`);
+  const today = todayISO();
+  const [salesRes, paymentsRes, expensesRes] = await Promise.all([
+    sb.from('sales').select('*, customers(nombre)').eq('fecha', today).order('created_at'),
+    sb.from('payments').select('*, customers(nombre)').eq('fecha', today).order('created_at'),
+    sb.from('expenses').select('*').eq('fecha', today).order('created_at')
+  ]);
+  const sales = salesRes.data || [];
+  const payments = paymentsRes.data || [];
+  const expenses = expensesRes.data || [];
+
+  const events = [
+    ...sales.map(s=>({type:'venta', created_at:s.created_at, ...s})),
+    ...payments.map(p=>({type:'abono', created_at:p.created_at, ...p}))
+  ].sort((a,b)=> new Date(a.created_at)-new Date(b.created_at));
+
+  const efectivoHoy = sales.filter(s=>s.pagado).reduce((a,s)=>a+Number(s.total),0) + payments.reduce((a,p)=>a+Number(p.monto),0);
+  const creditoHoy = sales.filter(s=>!s.pagado).reduce((a,s)=>a+Number(s.total),0);
+  const gastosHoy = expenses.reduce((a,e)=>a+Number(e.monto),0);
+
+  const body = document.getElementById('daily-summary-body');
+  body.innerHTML = `
+    <h2>📋 Movimientos de hoy</h2>
+    <div class="row" style="margin-bottom:14px;">
+      <div class="stat pos"><div class="label">Efectivo hoy</div><div class="value">${money(efectivoHoy)}</div></div>
+      <div class="stat"><div class="label">Gastos hoy</div><div class="value">${money(gastosHoy)}</div></div>
+    </div>
+    <div class="section-title">Ventas y abonos (${events.length})</div>
+    <div class="card" style="margin-bottom:14px;max-height:300px;overflow-y:auto;">
+      ${events.length===0 ? '<div class="empty">Todavía no hay ventas ni abonos hoy.</div>' :
+        events.map(e=>`
+        <div class="list-item">
+          <div>
+            <div><strong>${e.type==='venta'?'🧾 Venta':'💰 Abono'} · ${e.customers?e.customers.nombre:'(cliente eliminado)'}</strong></div>
+            <div class="meta">${e.type==='venta' ? sizeLabel(e.tamano)+' · '+e.cantidad+' '+unidadLabel(e.unidad)+(e.pagado?' · Contado':' · Crédito') : 'Abono a cuenta'}</div>
+          </div>
+          <div class="amount" style="color:${e.type==='venta'&&!e.pagado?'var(--rust)':'var(--green)'}">${money(e.type==='venta'?e.total:e.monto)}</div>
+        </div>`).join('')}
+    </div>
+    ${creditoHoy>0?`<div class="empty" style="text-align:left;font-size:12.5px;">⚠️ Además, hoy se vendió ${money(creditoHoy)} al crédito (no es efectivo, es deuda nueva).</div>`:''}
+    ${expenses.length>0 ? `
+    <div class="section-title">Gastos de hoy (${expenses.length})</div>
+    <div class="card">
+      ${expenses.map(e=>`<div class="list-item"><div><strong>${e.categoria}</strong>${e.descripcion?`<div class="meta">${e.descripcion}</div>`:''}</div><div class="amount">${money(e.monto)}</div></div>`).join('')}
+    </div>` : ''}
   `;
 }
 
@@ -523,6 +576,7 @@ function openSaleModal(){
     <input type="date" id="sf-fecha" value="${todayISO()}">
     <label>Cliente</label>
     <select id="sf-cliente" onchange="toggleNewClient()">
+      <option value="" disabled selected>Selecciona un cliente…</option>
       ${state.clients.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('')}
       <option value="__new__">+ Nuevo cliente…</option>
     </select>
@@ -586,6 +640,7 @@ async function saveSale(btn){
   const precio_unitario = parseFloat(document.getElementById('sf-precio').value);
   const total = parseFloat(document.getElementById('sf-total').value);
 
+  if(!clienteSel){ alert('⚠️ No seleccionaste ningún cliente. Elige uno antes de guardar.'); return; }
   if(clienteSel === '__new__'){
     const nombre = document.getElementById('sf-new-client').value.trim();
     if(!nombre){ alert('Escribe el nombre del nuevo cliente'); return; }
@@ -628,6 +683,14 @@ function setDebtThreshold(v){
   localStorage.setItem('granja_debt_threshold', debtThreshold);
   renderClients();
 }
+// Estado del saldo de un cliente: debe (rojo), a favor / le sobró crédito (verde), o al día (verde neutro).
+// Un saldo negativo puede pasar si se borra una venta que ya tenía abonos aplicados — es real, no un error,
+// y debe mostrarse con claridad en vez de esconderse como "Al día".
+function balanceInfo(balance){
+  if(balance>0.001) return {text: money(balance)+' debe', color:'var(--rust)'};
+  if(balance<-0.001) return {text: money(Math.abs(balance))+' a favor', color:'var(--green)'};
+  return {text:'Al día', color:'var(--green)'};
+}
 async function renderClients(){
   const [{data: sales}, {data: payments}] = await Promise.all([
     sb.from('sales').select('customer_id, total, pagado'),
@@ -669,6 +732,7 @@ async function renderClients(){
         filtered.map(c=>{
           const balance = c.balance;
           const alto = balance>debtThreshold;
+          const bi = balanceInfo(balance);
           return `
           <div class="list-item" style="cursor:pointer;${alto?'background:var(--rust-soft);margin:0 -18px;padding:13px 18px;':''}" onclick="openClientDetail('${c.id}')">
             <div>
@@ -676,8 +740,8 @@ async function renderClients(){
               ${c.telefono? `<div class="meta">${c.telefono}</div>`:''}
             </div>
             <div style="display:flex;align-items:center;gap:10px;">
-              <div class="amount" style="color:${balance>0.001?'var(--rust)':'var(--green)'}">${balance>0.001?money(balance)+' debe':'Al día'}</div>
-              ${balance>0.001?`<button class="del-x" style="font-size:13px;" onclick="event.stopPropagation();openPaymentModal('${c.id}','${c.nombre.replace(/'/g,"\\'")}')">Abonar</button>`:''}
+              <div class="amount" style="color:${bi.color}">${bi.text}</div>
+              <button onclick="event.stopPropagation();openPaymentModal('${c.id}','${c.nombre.replace(/'/g,"\\'")}')" style="background:var(--green);color:#fff;border:none;border-radius:20px;padding:9px 16px;font-size:13px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(63,107,74,.25);">💰 Abonar</button>
             </div>
           </div>`;
         }).join('')}
@@ -710,17 +774,17 @@ async function saveNewClient(btn){
     renderClients();
   });
 }
-function openPaymentModal(customerId, nombre){
+function openPaymentModal(customerId, nombre, returnToDetail){
   showModal(`
     <h2>Abono de ${nombre}</h2>
     <label>Fecha</label>
     <input type="date" id="pay-fecha" value="${todayISO()}">
     <label>Monto (Q)</label>
     <input type="number" id="pay-monto" step="0.01" placeholder="0.00">
-    <button class="btn" onclick="savePayment(this,'${customerId}')">Guardar abono</button>
+    <button class="btn" onclick="savePayment(this,'${customerId}',${returnToDetail?'true':'false'})">Guardar abono</button>
   `);
 }
-async function savePayment(btn, customerId){
+async function savePayment(btn, customerId, returnToDetail){
   const fecha = document.getElementById('pay-fecha').value;
   const monto = parseFloat(document.getElementById('pay-monto').value);
   if(!monto){ alert('Escribe el monto'); return; }
@@ -728,7 +792,8 @@ async function savePayment(btn, customerId){
     const {error} = await sb.from('payments').insert({customer_id: customerId, fecha, monto});
     if(error) throw error;
     closeModal();
-    renderClients();
+    if(returnToDetail) openClientDetail(customerId);
+    else renderClients();
   });
 }
 
@@ -766,14 +831,18 @@ async function openClientDetail(customerId){
   window.__clientDetailData = {client, rows, balanceFinal};
 
   const body = document.getElementById('client-detail-body');
+  const bi = balanceInfo(balanceFinal);
   body.innerHTML = `
     <h2>${client.nombre}</h2>
     ${client.telefono?`<div class="meta" style="margin-bottom:10px;">${client.telefono}</div>`:''}
-    <div class="stat ${balanceFinal>0.001?'neg':'pos'}" style="margin-bottom:16px;">
+    <div class="stat ${balanceFinal>0.001?'neg':'pos'}" style="margin-bottom:14px;">
       <div class="label">Saldo actual</div>
-      <div class="value">${balanceFinal>0.001?money(balanceFinal)+' debe':'Al día'}</div>
+      <div class="value">${bi.text}</div>
     </div>
-    <button class="btn secondary" style="margin-bottom:16px;" onclick="downloadClientReport(this)">📄 Generar reporte para enviar</button>
+    <div class="row" style="margin-bottom:16px;">
+      <button onclick="closeModal();openPaymentModal('${client.id}','${client.nombre.replace(/'/g,"\\'")}',true)" style="background:var(--green);color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;box-shadow:0 2px 6px rgba(63,107,74,.25);">💰 Abonar</button>
+      <button class="btn ghost" onclick="downloadClientReport(this)">📄 Reporte</button>
+    </div>
     <div class="section-title">Historial completo</div>
     <div class="card" style="max-height:340px;overflow-y:auto;">
       ${rows.length===0 ? '<div class="empty">Sin movimientos todavía.</div>' :
