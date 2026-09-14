@@ -584,11 +584,16 @@ function openSaleModal(){
     <label>Fecha</label>
     <input type="date" id="sf-fecha" value="${todayISO()}">
     <label>Cliente</label>
-    <select id="sf-cliente" onchange="toggleNewClient()">
-      <option value="" disabled selected>Selecciona un cliente…</option>
-      ${state.clients.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('')}
-      <option value="__new__">+ Nuevo cliente…</option>
-    </select>
+    <div style="position:relative;">
+      <span style="position:absolute;left:14px;top:16px;color:var(--ink-soft);">🔍</span>
+      <input type="text" id="sf-cliente-search" placeholder="Buscar cliente por nombre…" autocomplete="off"
+        style="padding-left:38px;"
+        oninput="renderSaleClientList(this.value)"
+        onfocus="renderSaleClientList(this.value)"
+        onblur="setTimeout(()=>{document.getElementById('sf-cliente-list').style.display='none';},150)">
+    </div>
+    <div id="sf-cliente-list" style="display:none;border:1.5px solid var(--border);border-radius:10px;max-height:180px;overflow-y:auto;margin:-8px 0 14px;background:#fff;"></div>
+    <input type="hidden" id="sf-cliente" value="">
     <div id="sf-new-client-wrap" style="display:none;">
       <label>Nombre del nuevo cliente</label>
       <input type="text" id="sf-new-client" placeholder="Nombre">
@@ -617,9 +622,23 @@ function openSaleModal(){
   recalcSale();
 }
 const saleState = {unidad:'carton', pagado:true};
-function toggleNewClient(){
-  const isNew = document.getElementById('sf-cliente').value === '__new__';
-  document.getElementById('sf-new-client-wrap').style.display = isNew ? 'block' : 'none';
+function renderSaleClientList(term){
+  term = (term||'').trim().toLowerCase();
+  const list = document.getElementById('sf-cliente-list');
+  const matches = state.clients.filter(c=>c.nombre.toLowerCase().includes(term));
+  list.innerHTML = `
+    <div class="list-item" style="padding:12px 14px;cursor:pointer;color:var(--yolk-dark);font-weight:700;" onmousedown="selectSaleClient('__new__','+ Nuevo cliente…')">+ Nuevo cliente…</div>
+    ${matches.length===0 ? '<div class="empty" style="padding:12px;">Sin resultados</div>' :
+      matches.map(c=>`<div class="list-item" style="padding:12px 14px;cursor:pointer;" onmousedown="selectSaleClient('${c.id}','${c.nombre.replace(/'/g,"\\'")}')">${c.nombre}</div>`).join('')}
+  `;
+  list.style.display = 'block';
+}
+function selectSaleClient(id, nombre){
+  document.getElementById('sf-cliente').value = id;
+  document.getElementById('sf-cliente-search').value = id==='__new__' ? '' : nombre;
+  document.getElementById('sf-cliente-list').style.display = 'none';
+  document.getElementById('sf-new-client-wrap').style.display = id==='__new__' ? 'block' : 'none';
+  if(id==='__new__') document.getElementById('sf-new-client').focus();
 }
 function setUnidad(u){
   saleState.unidad = u;
@@ -852,6 +871,7 @@ async function openClientDetail(customerId){
       ${Math.abs(balanceFinal)>0.001?`<button onclick="closeModal();openPaymentModal('${client.id}','${client.nombre.replace(/'/g,"\\'")}',true)" style="background:var(--green);color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;box-shadow:0 2px 6px rgba(63,107,74,.25);">💰 Abonar</button>`:''}
       <button class="btn ghost" onclick="downloadClientReport(this)">📄 Reporte</button>
     </div>
+    <button class="btn danger" style="margin-bottom:16px;" onclick="deleteClient('${client.id}','${client.nombre.replace(/'/g,"\\'")}')">🗑️ Eliminar cliente</button>
     <div class="section-title">Historial completo</div>
     <div class="card" style="max-height:340px;overflow-y:auto;">
       ${rows.length===0 ? '<div class="empty">Sin movimientos todavía.</div>' :
@@ -882,6 +902,16 @@ function loadHtml2Canvas(){
     s.onerror = ()=> reject(new Error('No se pudo cargar el generador de imágenes. Revisa tu conexión a internet.'));
     document.head.appendChild(s);
   });
+}
+
+async function deleteClient(customerId, nombre){
+  const ok = confirm(`¿Eliminar a ${nombre}?\n\nEsto borra al cliente y sus abonos registrados. Sus ventas pasadas NO se borran, pero quedarán marcadas como "cliente eliminado".\n\nEsta acción no se puede deshacer.`);
+  if(!ok) return;
+  const {error} = await sb.from('customers').delete().eq('id', customerId);
+  if(error){ alert('No se pudo eliminar: ' + error.message); return; }
+  closeModal();
+  await loadClients();
+  renderClients();
 }
 
 async function downloadClientReport(btn){
